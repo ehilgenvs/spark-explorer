@@ -1,0 +1,187 @@
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+@if (Topic is null || Topic.History.Count == 0)
+{
+    <div class="empty">
+        <MudText Typo="Typo.subtitle2">No topic selected</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            Select a topic on the left to see its latest message, decoded Sparkplug metrics and history.
+            Use the chart button next to a value to plot it.
+        </MudText>
+    </div>
+}
+else
+{
+    var msg = Current!;
+    var following = ReferenceEquals(msg, Topic.History[0]);
+    var spTopic = SpTopic.Parse(Topic.Topic);
+
+    <MudText Typo="Typo.subtitle1" Class="mono topic-title">@Topic.Topic</MudText>
+    <div class="meta">
+        <span>Messages <b>@Topic.Count</b></span>
+        <span>Received <b>@Fmt.Full(msg.Received)</b></span>
+        <span>QoS <b>@msg.Qos</b></span>
+        <span>Retained <b>@(msg.Retain ? "yes" : "no")</b></span>
+        <span>Size <b>@msg.Payload.Length B</b></span>
+    </div>
+
+    <div class="toolbar">
+        <MudSelect T="string" Value="Format" ValueChanged="v => FormatChanged.InvokeAsync(v)" Label="View" Variant="Variant.Outlined"
+                   Margin="Margin.Dense" Dense="true" Class="f-view">
+            <MudSelectItem Value="@("auto")">Auto</MudSelectItem>
+            <MudSelectItem Value="@("sparkplug")">Sparkplug</MudSelectItem>
+            <MudSelectItem Value="@("json")">JSON</MudSelectItem>
+            <MudSelectItem Value="@("text")">Text</MudSelectItem>
+            <MudSelectItem Value="@("hex")">Hex</MudSelectItem>
+        </MudSelect>
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="CopyTopic">Copy topic</MudButton>
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ContentPaste" OnClick="() => CopyPayload(msg)">Copy payload</MudButton>
+        @if (Session.IsConnected)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Error" StartIcon="@Icons.Material.Filled.LayersClear" OnClick="ClearRetained">
+                Clear retained
+            </MudButton>
+        }
+        @if (!following)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.SkipPrevious"
+                       OnClick="() => SelectedChanged.InvokeAsync(null)">Show latest</MudButton>
+        }
+    </div>
+
+    var mode = ResolveMode(msg);
+    if (mode == "sparkplug")
+    {
+        var (sp, error) = Session.DecodeOnDemand(Topic.Topic, msg);
+        if (sp != null)
+        {
+            <SparkplugPayloadView Payload="sp" Session="Session" SpKey="@(spTopic?.Key)" />
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">This payload is not valid Sparkplug B protobuf (@error).</MudAlert>
+            <pre class="hex">@Fmt.HexDump(msg.Payload)</pre>
+        }
+    }
+    else
+    {
+        if (msg.Text.Kind == PayloadKind.Json && msg.Text.Json is { } json)
+        {
+            var points = JsonPoints.Extract(json);
+            if (points.Count > 0)
+            {
+                <MudPaper Outlined="true" Class="points">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">Data points – select to chart</MudText>
+                    <div class="point-list">
+                        @foreach (var (path, value) in points)
+                        {
+                            var key = SeriesKeys.ForTopic(Topic.Topic, path);
+                            var on = Session.IsPlotted(key);
+                            <MudChip T="string" Size="Size.Small" Variant="@(on ? Variant.Filled : Variant.Outlined)"
+                                     Color="@(on ? Color.Primary : Color.Default)" Icon="@Icons.Material.Filled.ShowChart"
+                                     OnClick="() => Session.TogglePlot(key)">
+                                @(path.Length == 0 ? "value" : path) = @Fmt.Value(value)
+                            </MudChip>
+                        }
+                    </div>
+                </MudPaper>
+            }
+        }
+
+        if (mode == "hex")
+        {
+            <pre class="hex">@Fmt.HexDump(msg.Payload)</pre>
+        }
+        else if (mode == "json")
+        {
+            if (msg.Text.Kind == PayloadKind.Json)
+            {
+                <pre>@Fmt.HighlightJson(msg.Text.PrettyJson!)</pre>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">This payload is not valid JSON.</MudAlert>
+                <pre>@Encoding.UTF8.GetString(msg.Payload)</pre>
+            }
+        }
+        else
+        {
+            <pre>@(msg.Payload.Length == 0 ? "(empty payload)" : Encoding.UTF8.GetString(msg.Payload))</pre>
+        }
+    }
+
+    <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">History <span class="mud-text-secondary">(last @Topic.History.Count)</span></MudText>
+    <MudPaper Outlined="true" Class="hist">
+        @foreach (var m in Topic.History)
+        {
+            <div class="@(ReferenceEquals(m, msg) ? "cur" : "")" @onclick="() => SelectedChanged.InvokeAsync(m)">
+                <span class="tm">@Fmt.Time(m.Received)</span>
+                <span class="pv">@m.Preview</span>
+            </div>
+        }
+    </MudPaper>
+}
+
+@code {
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+    [Parameter] public TopicData? Topic { get; set; }
+    [Parameter] public MqttMessage? Selected { get; set; }
+    [Parameter] public EventCallback<MqttMessage?> SelectedChanged { get; set; }
+    [Parameter] public string Format { get; set; } = "auto";
+    [Parameter] public EventCallback<string> FormatChanged { get; set; }
+
+    private MqttMessage? Current =>
+        Topic == null ? null
+        : Selected != null && Topic.History.Contains(Selected) ? Selected
+        : Topic.History[0];
+
+    private string ResolveMode(MqttMessage m)
+    {
+        if (Format != "auto") return Format;
+        if (m.Sparkplug != null || m.SparkplugError != null) return "sparkplug";
+        return m.Text.Kind switch
+        {
+            PayloadKind.Json => "json",
+            PayloadKind.Binary => "hex",
+            _ => "text",
+        };
+    }
+
+    private Task CopyTopic() => Copy(Topic!.Topic, "Topic copied");
+
+    private Task CopyPayload(MqttMessage m)
+    {
+        string text;
+        if (m.Sparkplug != null) text = Fmt.PrettyJson(m.Sparkplug);
+        else if (m.Text.Kind == PayloadKind.Binary) text = Fmt.HexDump(m.Payload);
+        else text = m.Text.Text;
+        return Copy(text, "Payload copied");
+    }
+
+    private async Task Copy(string text, string done)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            Snackbar.Add(done, Severity.Success);
+        }
+        catch (JSException)
+        {
+            Snackbar.Add("The browser blocked clipboard access.", Severity.Warning);
+        }
+    }
+
+    private async Task ClearRetained()
+    {
+        var topic = Topic!.Topic;
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Clear retained message",
+            $"Publish an empty retained message to \"{topic}\"? The broker will stop sending the retained message to new subscribers.",
+            yesText: "Clear retained", cancelText: "Cancel");
+        if (confirmed != true) return;
+        var error = await Session.PublishAsync(topic, Array.Empty<byte>(), 0, true);
+        if (error is null) Snackbar.Add("Retained message cleared", Severity.Success);
+        else Snackbar.Add("Clear retained failed: " + error, Severity.Error);
+    }
+}

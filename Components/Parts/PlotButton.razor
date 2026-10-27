@@ -1,0 +1,16 @@
+@* Toggles a data point in the chart panel. The wrapper stops the click from also selecting the row. *@
+<span class="plot-btn" @onclick:stopPropagation="true">
+    <MudTooltip Text="@(Plotted ? "Remove from chart" : "Show in chart")">
+        <MudIconButton Icon="@(Plotted ? Icons.Material.Filled.ShowChart : Icons.Material.Outlined.ShowChart)"
+                       Color="@(Plotted ? Color.Primary : Color.Default)" Size="Size.Small"
+                       OnClick="() => Session.TogglePlot(SeriesKey)"
+                       aria-label="@(Plotted ? "Remove from chart" : "Show in chart")" />
+    </MudTooltip>
+</span>
+
+@code {
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+    [Parameter, EditorRequired] public string SeriesKey { get; set; } = default!;
+
+    private bool Plotted => Session.IsPlotted(SeriesKey);
+}

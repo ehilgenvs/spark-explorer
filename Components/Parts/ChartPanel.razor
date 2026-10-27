@@ -1,0 +1,282 @@
+@* Live line chart of the data points selected with the chart buttons. *@
+<MudPaper Square="true" Elevation="0" Class="@($"chart-panel{(_tall ? " tall" : "")}")">
+    <div class="chart-head">
+        <MudIcon Icon="@Icons.Material.Filled.ShowChart" Size="Size.Small" Color="Color.Primary" />
+        <MudText Typo="Typo.subtitle2">Chart</MudText>
+        <div class="chart-chips">
+            @for (var i = 0; i < Session.Plotted.Count; i++)
+            {
+                var key = Session.Plotted[i];
+                var color = AppTheme.ChartPalette[i % AppTheme.ChartPalette.Length];
+                Session.Series.TryGetValue(key, out var s);
+                <MudTooltip Text="@(s?.Source ?? key)">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" OnClose="() => Session.TogglePlot(key)">
+                        <span class="swatch" style="background:@color"></span>@(s?.Label ?? LabelFromKey(key))
+                        @if (s?.Unit is { } unit)
+                        {
+                            <span class="mud-text-secondary">&nbsp;(@unit)</span>
+                        }
+                    </MudChip>
+                </MudTooltip>
+            }
+        </div>
+        <MudSpacer />
+        <MudSelect T="string" @bind-Value="_window" Label="Time window" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="f-window">
+            @foreach (var (id, label, _) in Windows)
+            {
+                <MudSelectItem Value="@id">@label</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTooltip Text="@(_normalize ? "Show all data points on one shared scale" : "Scale each data point to its own range (0–100 %) to compare shapes")">
+            <MudToggleIconButton @bind-Toggled="_normalize" Icon="@Icons.Material.Filled.Height" ToggledIcon="@Icons.Material.Filled.Height"
+                                 ToggledColor="Color.Primary" Size="Size.Small" aria-label="Normalize" />
+        </MudTooltip>
+        <MudTooltip Text="@(_frozen ? "Resume live updates" : "Freeze the chart")">
+            <MudIconButton Icon="@(_frozen ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)" Size="Size.Small"
+                           Color="@(_frozen ? Color.Warning : Color.Default)" OnClick="ToggleFreeze" aria-label="Freeze chart" />
+        </MudTooltip>
+        <MudTooltip Text="@(_tall ? "Make the chart smaller" : "Make the chart taller")">
+            <MudIconButton Icon="@(_tall ? Icons.Material.Filled.UnfoldLess : Icons.Material.Filled.UnfoldMore)" Size="Size.Small"
+                           OnClick="() => _tall = !_tall" aria-label="Resize chart" />
+        </MudTooltip>
+        <MudTooltip Text="Remove all data points from the chart">
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="() => Session.ClearPlots()" aria-label="Close chart" />
+        </MudTooltip>
+    </div>
+
+    @{
+        var view = BuildView();
+    }
+    @* While the pointer is over the chart it holds still, so hover tooltips stay readable. *@
+    <div class="chart-body" @onmouseenter="() => _hoverHold = true" @onmouseleave="ReleaseHover">
+        @*
+            The chart stays mounted while the panel is open (the "waiting" note is drawn over it) and its height is
+            given as calc(100%) rather than "100%". With a bare percentage, MudChart re-renders after its first render
+            and replaces the inner chart it just created; that chart's pending resize callback then reaches a disposed
+            object ("There was an exception invoking 'OnElementSizeChanged'").
+        *@
+        <MudChart T="double" ChartType="ChartType.Timeseries" ChartSeries="view.Series" ChartOptions="view.Options"
+                  Width="100%" Height="calc(100%)" MatchBoundsToSize="true" TooltipTemplate="Tooltip" />
+        @if (view.Series.Count == 0)
+        {
+            <div class="chart-empty">
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    Waiting for values. The chart draws a line once a data point has at least two values in the selected time window.
+                </MudText>
+            </div>
+        }
+    </div>
+
+    <MudSimpleTable Dense="true" Elevation="0" Class="chart-stats">
+        <thead>
+            <tr><th></th><th>Data point</th><th>Last</th><th>Min</th><th>Max</th><th>Average</th><th>Values</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var st in view.Stats)
+            {
+                <tr>
+                    <td><span class="swatch" style="background:@st.Color"></span></td>
+                    <td><span class="n">@st.Label</span> <span class="mud-text-secondary">@st.Source</span></td>
+                    <td class="v">@Num(st.Last)</td>
+                    <td class="v">@Num(st.Min)</td>
+                    <td class="v">@Num(st.Max)</td>
+                    <td class="v">@Num(st.Avg)</td>
+                    <td class="v">@st.Count</td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+
+    private static readonly (string Id, string Label, TimeSpan? Span)[] Windows =
+    {
+        ("1m", "1 minute", TimeSpan.FromMinutes(1)),
+        ("5m", "5 minutes", TimeSpan.FromMinutes(5)),
+        ("15m", "15 minutes", TimeSpan.FromMinutes(15)),
+        ("1h", "1 hour", TimeSpan.FromHours(1)),
+        ("all", "Everything kept", null),
+    };
+
+    private static readonly TimeSpan[] LabelSteps =
+    {
+        TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10),
+        TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2),
+        TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(30),
+        TimeSpan.FromHours(1), TimeSpan.FromHours(2), TimeSpan.FromHours(6), TimeSpan.FromHours(12), TimeSpan.FromDays(1),
+    };
+
+    private sealed record Stat(string Label, string Source, string Color, double? Last, double? Min, double? Max, double? Avg, int Count);
+    // How a plotted line maps back to real values (the chart only draws ticks at whole-number steps).
+    private sealed record Line(string Name, string Color, string? Unit, Func<double, double> ToValue);
+    private sealed record View(List<ChartSeries<double>> Series, TimeSeriesChartOptions Options, List<Stat> Stats, List<Line> Lines);
+
+    private string _window = "5m";
+    private bool _tall;
+    private bool _frozen;
+    private bool _hoverHold;
+    private bool _normalize;
+    private View? _frozenView;
+    private View? _current;
+
+    private bool Held => _frozen || _hoverHold;
+
+    private void ToggleFreeze()
+    {
+        _frozen = !_frozen;
+        if (!Held) _frozenView = null;
+    }
+
+    private void ReleaseHover()
+    {
+        _hoverHold = false;
+        if (!Held) _frozenView = null;
+    }
+
+    private View BuildView()
+    {
+        if (Held && _frozenView != null) return _current = _frozenView;
+
+        var span = Windows.First(w => w.Id == _window).Span;
+        var from = span is { } s ? DateTime.Now - s : (DateTime?)null;
+
+        var stats = new List<Stat>();
+        var drawn = new List<(DataSeries Ds, string Color, List<(DateTime Time, double Value)> Pts)>();
+
+        for (var i = 0; i < Session.Plotted.Count; i++)
+        {
+            var key = Session.Plotted[i];
+            var color = AppTheme.ChartPalette[i % AppTheme.ChartPalette.Length];
+            if (!Session.Series.TryGetValue(key, out var ds))
+            {
+                stats.Add(new Stat(LabelFromKey(key), "", color, null, null, null, null, 0));
+                continue;
+            }
+            var pts = ds.Window(from);
+            stats.Add(pts.Count > 0
+                ? new Stat(ds.Label, ds.Source, color, pts[^1].Value, pts.Min(p => p.Value), pts.Max(p => p.Value), pts.Average(p => p.Value), pts.Count)
+                : new Stat(ds.Label, ds.Source, color, ds.Last, null, null, null, 0));
+            if (pts.Count >= 2) drawn.Add((ds, color, pts));
+        }
+
+        var series = new List<ChartSeries<double>>();
+        var lines = new List<Line>();
+        var options = new TimeSeriesChartOptions
+        {
+            ShowLegend = false,
+            LineStrokeWidth = 2,
+            ShowDataMarkers = false,
+            YAxisRequireZeroPoint = false,
+            YAxisLines = true,
+            XAxisLines = false,
+            TooltipTimeLabelFormat = "HH:mm:ss.fff",
+        };
+
+        if (drawn.Count > 0)
+        {
+            // MudChart places Y grid lines at whole-number steps, so values are mapped onto a "nice" step grid
+            // (or 0–100 % per line when normalizing) and the axis labels and tooltip translate back.
+            var normalize = _normalize && drawn.Count > 1;
+            double baseValue = 0, step = 1;
+            if (normalize)
+            {
+                options.YAxisTicks = 20;
+                options.MaxNumYAxisTicks = 6;
+                options.YAxisToStringFunc = v => $"{v:0}%";
+            }
+            else
+            {
+                var min = drawn.Min(d => d.Pts.Min(p => p.Value));
+                var max = drawn.Max(d => d.Pts.Max(p => p.Value));
+                step = NiceStep(max - min, Math.Abs(max));
+                baseValue = Math.Floor(min / step) * step;
+                var b = baseValue;
+                var st = step;
+                options.YAxisTicks = 1;
+                options.MaxNumYAxisTicks = 12;
+                options.YAxisToStringFunc = v => Num(b + v * st);
+                var units = drawn.Select(d => d.Ds.Unit).Distinct().ToList();
+                options.YAxisTitle = units.Count == 1 ? units[0] : null;
+            }
+
+            foreach (var (ds, color, pts) in drawn)
+            {
+                Func<double, double> toChart, toValue;
+                if (normalize)
+                {
+                    var lo = pts.Min(p => p.Value);
+                    var range = pts.Max(p => p.Value) - lo;
+                    if (range <= 0) range = 1;
+                    toChart = v => (v - lo) / range * 100;
+                    toValue = y => lo + y / 100 * range;
+                }
+                else
+                {
+                    var b = baseValue;
+                    var st = step;
+                    toChart = v => (v - b) / st;
+                    toValue = y => b + y * st;
+                }
+                var name = ds.Unit is null ? ds.Label : $"{ds.Label} ({ds.Unit})";
+                series.Add(new ChartSeries<double>
+                {
+                    Name = name,
+                    Data = pts.Select(p => new TimeValue<double>(p.Time, toChart(p.Value))).ToList(),
+                    TooltipYValueFormat = "R",
+                });
+                lines.Add(new Line(name, color, ds.Unit, toValue));
+            }
+
+            var minT = drawn.Min(d => d.Pts[0].Time);
+            var maxT = drawn.Max(d => d.Pts[^1].Time);
+            var labelStep = LabelSteps.FirstOrDefault(t => (maxT - minT).Ticks / t.Ticks <= 8);
+            if (labelStep == default) labelStep = LabelSteps[^1];
+            options.TimeLabelSpacing = labelStep;
+            options.TimeLabelFormat = labelStep < TimeSpan.FromMinutes(1) ? "HH:mm:ss" : "HH:mm";
+            options.ChartPalette = lines.Select(l => l.Color).ToArray();
+        }
+
+        var view = new View(series, options, stats, lines);
+        if (Held) _frozenView = view;
+        return _current = view;
+    }
+
+    /// <summary>A 1/2/5 × 10ⁿ step that splits <paramref name="range"/> into about five intervals.</summary>
+    private static double NiceStep(double range, double magnitude)
+    {
+        if (range <= 0) range = magnitude > 0 ? magnitude * 0.1 : 1;
+        var raw = range / 5;
+        var pow = Math.Pow(10, Math.Floor(Math.Log10(raw)));
+        var f = raw / pow;
+        return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * pow;
+    }
+
+    private RenderFragment<(SvgPath Segment, string Color)> Tooltip => ctx =>
+    {
+        var line = _current?.Lines.FirstOrDefault(l => l.Color == ctx.Color);
+        var value = double.TryParse(ctx.Segment.LabelYValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.CurrentCulture, out var y)
+            ? Num(line?.ToValue(y) ?? y) + (line?.Unit is { } u ? " " + u : "")
+            : ctx.Segment.LabelYValue;
+        var title = line?.Name ?? "";
+        var sub = $"{value}   {ctx.Segment.LabelXValue}";
+        var width = Math.Max(title.Length, sub.Length) * 7 + 20;
+        return @<g class="chart-tip">
+                    <rect x="@(-width / 2)" y="-48" width="@width" height="40" rx="4" />
+                    <text x="0" y="-31" text-anchor="middle" class="t1">@title</text>
+                    <text x="0" y="-15" text-anchor="middle" class="t2" xml:space="preserve">@sub</text>
+                </g>;
+    };
+
+    private static string LabelFromKey(string key)
+    {
+        var parts = key.Split('|');
+        return parts.Length == 3 && parts[2].Length > 0 ? parts[2] : parts.Length > 1 ? parts[1] : key;
+    }
+
+    private static string Num(double? v) => v is not { } d ? "–"
+        : Math.Abs(d) >= 1e6 || (Math.Abs(d) < 1e-3 && d != 0)
+            ? d.ToString("0.###e0", System.Globalization.CultureInfo.InvariantCulture)
+            : d.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+}

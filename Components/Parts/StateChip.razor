@@ -1,0 +1,18 @@
+@if (Online == true)
+{
+    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">online</MudChip>
+}
+else if (Online == false)
+{
+    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">offline</MudChip>
+}
+else
+{
+    <MudTooltip Text="No birth certificate seen yet, so metric names may be missing">
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">no birth</MudChip>
+    </MudTooltip>
+}
+
+@code {
+    [Parameter] public bool? Online { get; set; }
+}

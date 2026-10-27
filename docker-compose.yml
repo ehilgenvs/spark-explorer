@@ -1,0 +1,43 @@
+# Spark Explorer + a Mosquitto broker (MQTT over TCP and WebSocket).
+#
+#   docker compose up -d --build
+#   open http://localhost:8080
+#
+# The app is preconfigured for the bundled broker (host "mosquitto"). To use your own broker
+# instead, change the Mqtt__* values below, or just type its address in the app.
+# A broker running on the Docker host itself is reachable as "host.docker.internal".
+
+services:
+  spark-explorer:
+    build: .
+    image: spark-explorer:latest
+    container_name: spark-explorer
+    ports:
+      - "8080:8080"            # web UI
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # Defaults shown in the connection bar (see the "Mqtt" section of appsettings.json)
+      Mqtt__Transport: Tcp      # Tcp or WebSocket
+      Mqtt__Host: mosquitto
+      Mqtt__Port: "1883"
+      Mqtt__WebSocketUri: ws://mosquitto:9001
+      Mqtt__Subscriptions: "#, $$SYS/#"   # $$ escapes $ in compose files
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18
+    container_name: mosquitto
+    ports:
+      - "1883:1883"            # MQTT over TCP
+      - "9001:9001"            # MQTT over WebSocket
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    restart: unless-stopped
+
+volumes:
+  mosquitto-data:

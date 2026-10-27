@@ -1,0 +1,63 @@
+@switch (Value)
+{
+    case null:
+        <span class="muted">null</span>
+        break;
+    case bool b:
+        <span class="@(b ? "bool-t" : "bool-f")">@(b ? "true" : "false")</span>
+        break;
+    case DateTimeOffset d:
+        <text>@Fmt.Value(d)<span class="sub">@d.ToUnixTimeMilliseconds()</span></text>
+        break;
+    case SpDataSet ds:
+        <div class="tablewrap">
+            <table class="inner">
+                <thead>
+                    <tr>
+                        @for (var i = 0; i < ds.Columns.Count; i++)
+                        {
+                            <th>@ds.Columns[i]<span class="sub">@(i < ds.Types.Count ? ds.Types[i] : "")</span></th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in ds.Rows.Take(100))
+                    {
+                        <tr>
+                            @foreach (var cell in row)
+                            {
+                                <td><ValueView Value="cell" /></td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (ds.Rows.Count > 100)
+        {
+            <span class="sub">@ds.Rows.Count rows, first 100 shown</span>
+        }
+        break;
+    case SpTemplate t:
+        <details>
+            <summary>Template @t.TemplateRef @(t.IsDefinition ? "(definition)" : "") – @t.Metrics.Count members</summary>
+            <table class="inner">
+                @foreach (var p in t.Parameters)
+                {
+                    <tr><td>@p.Name<span class="sub">parameter</span></td><td>@p.TypeName</td><td><ValueView Value="p.Value" /></td></tr>
+                }
+                @foreach (var m in t.Metrics)
+                {
+                    <tr><td>@m.Name</td><td>@m.TypeName</td><td><ValueView Value="m.Value" /></td></tr>
+                }
+            </table>
+        </details>
+        break;
+    default:
+        <text>@Fmt.Value(Value)</text>
+        break;
+}
+
+@code {
+    [Parameter] public object? Value { get; set; }
+}

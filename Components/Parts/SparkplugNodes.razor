@@ -1,0 +1,94 @@
+@inject ISnackbar Snackbar
+
+@if (Session.SpNodes.Count == 0 && Session.SpHosts.Count == 0)
+{
+    <div class="empty">
+        <MudText Typo="Typo.subtitle2">No Sparkplug B traffic yet</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            Edge nodes and devices appear here once messages arrive on spBv1.0/#. If a node is already running,
+            its birth certificates were sent before you connected: use Rebirth once it shows up, or restart it.
+        </MudText>
+    </div>
+}
+else
+{
+    if (Session.SpHosts.Count > 0)
+    {
+        <MudText Typo="Typo.subtitle2" Class="mb-1">Host applications</MudText>
+        <div class="meta mb-4">
+            @foreach (var (host, st) in Session.SpHosts)
+            {
+                <span>@host <StateChip Online="st.Online" /> @Fmt.Ago(st.Updated)</span>
+            }
+        </div>
+    }
+    foreach (var group in Session.SpNodes.Values.GroupBy(n => n.Group).OrderBy(g => g.Key, NaturalComparer.Instance))
+    {
+        <MudText Typo="Typo.subtitle2" Class="mb-1">Group @group.Key</MudText>
+        @foreach (var node in group.Where(n => n.Device == null).OrderBy(n => n.EdgeNode, NaturalComparer.Instance))
+        {
+            var devices = group.Where(d => d.Device != null && d.EdgeNode == node.EdgeNode)
+                               .OrderBy(d => d.Device!, NaturalComparer.Instance).ToList();
+            var closed = Collapsed.Contains(node.Key);
+            <MudPaper Outlined="true" Class="node">
+                <div class="hd" @onclick="() => ToggleCollapse(node.Key)">
+                    <MudIcon Icon="@(closed ? Icons.Material.Filled.ChevronRight : Icons.Material.Filled.ExpandMore)" Size="Size.Small" />
+                    <MudIcon Icon="@Icons.Material.Filled.Router" Size="Size.Small" Class="mud-text-secondary" />
+                    <span class="ttl">@node.EdgeNode</span>
+                    <StateChip Online="node.Online" />
+                    <span class="info">
+                        @devices.Count @(devices.Count == 1 ? "device" : "devices"), @node.Metrics.Count metrics,
+                        seq @(node.Seq?.ToString() ?? "–"), @node.LastType @Fmt.Ago(node.LastUpdate)
+                    </span>
+                    <span class="act" @onclick:stopPropagation="true">
+                        <MudTooltip Text="@(Session.IsConnected ? "Ask this edge node to republish its birth certificates" : "Connect to a broker to send commands")">
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh"
+                                       Disabled="@(!Session.IsConnected)" OnClick="() => Rebirth(node)">Rebirth</MudButton>
+                        </MudTooltip>
+                    </span>
+                </div>
+                @if (!closed)
+                {
+                    <div class="bd">
+                        <MetricTable Node="node" Session="Session" />
+                        @foreach (var d in devices)
+                        {
+                            var dClosed = Collapsed.Contains(d.Key);
+                            <div class="device">
+                                <div class="hd" @onclick="() => ToggleCollapse(d.Key)">
+                                    <MudIcon Icon="@(dClosed ? Icons.Material.Filled.ChevronRight : Icons.Material.Filled.ExpandMore)" Size="Size.Small" />
+                                    <MudIcon Icon="@Icons.Material.Filled.Memory" Size="Size.Small" Class="mud-text-secondary" />
+                                    <span class="ttl">@d.Device</span>
+                                    <StateChip Online="d.Online" />
+                                    <span class="info">@d.Metrics.Count metrics, @d.LastType @Fmt.Ago(d.LastUpdate)</span>
+                                </div>
+                                @if (!dClosed)
+                                {
+                                    <MetricTable Node="d" Session="Session" />
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </MudPaper>
+        }
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+    [Parameter, EditorRequired] public HashSet<string> Collapsed { get; set; } = default!;
+
+    private void ToggleCollapse(string key)
+    {
+        if (!Collapsed.Remove(key)) Collapsed.Add(key);
+    }
+
+    private async Task Rebirth(SpNodeState node)
+    {
+        var topic = $"spBv1.0/{node.Group}/NCMD/{node.EdgeNode}";
+        var error = await Session.SendRebirthAsync(node.Group, node.EdgeNode);
+        if (error is null) Snackbar.Add($"Rebirth request sent to {topic}", Severity.Success);
+        else Snackbar.Add($"Rebirth failed: {error}", Severity.Error);
+    }
+}

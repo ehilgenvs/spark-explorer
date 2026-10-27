@@ -1,0 +1,66 @@
+@inject ISnackbar Snackbar
+
+<div class="pub">
+    <MudTextField T="string" @bind-Value="_topic" Label="Topic" Placeholder="factory/line1/cmd" Variant="Variant.Outlined" Margin="Margin.Dense"
+                  Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.KeyboardReturn"
+                  OnAdornmentClick="UseSelected" AdornmentAriaLabel="Use selected topic" HelperText="The return icon fills in the topic selected on the left" />
+    <MudTextField T="string" @bind-Value="_payload" Label="Payload" Lines="7" Variant="Variant.Outlined" Class="mono"
+                  Placeholder="@(_encoding == "hex" ? "01 02 0a ff" : "{\"setpoint\": 42}")" />
+    <div class="toolbar">
+        <MudSelect T="string" @bind-Value="_encoding" Label="Format" Variant="Variant.Outlined" Margin="Margin.Dense" Class="f-small">
+            <MudSelectItem Value="@("text")">Text</MudSelectItem>
+            <MudSelectItem Value="@("hex")">Hex bytes</MudSelectItem>
+        </MudSelect>
+        <MudSelect T="int" @bind-Value="_qos" Label="QoS" Variant="Variant.Outlined" Margin="Margin.Dense" Class="f-small">
+            <MudSelectItem Value="0">0</MudSelectItem>
+            <MudSelectItem Value="1">1</MudSelectItem>
+            <MudSelectItem Value="2">2</MudSelectItem>
+        </MudSelect>
+        <MudCheckBox T="bool" @bind-Value="_retain" Label="Retain" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Send" OnClick="Send"
+                   Disabled="@(!Session.IsConnected)">Publish</MudButton>
+    </div>
+    @if (!Session.IsConnected)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true">Connect to a broker to publish.</MudAlert>
+    }
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">
+        To send a Sparkplug Rebirth request, open the Sparkplug nodes tab and use Rebirth on an edge node.
+    </MudText>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+    [Parameter] public string? SelectedTopic { get; set; }
+
+    private string _topic = "";
+    private string _payload = "";
+    private string _encoding = "text";
+    private int _qos;
+    private bool _retain;
+
+    private void UseSelected()
+    {
+        if (SelectedTopic != null) _topic = SelectedTopic;
+    }
+
+    private async Task Send()
+    {
+        var topic = (_topic ?? "").Trim();
+        if (topic.Length == 0) { Snackbar.Add("Enter a topic to publish to.", Severity.Warning); return; }
+        if (topic.Contains('#') || topic.Contains('+')) { Snackbar.Add("Topics you publish to cannot contain # or + wildcards.", Severity.Warning); return; }
+
+        byte[] data;
+        if (_encoding == "hex")
+        {
+            var hex = System.Text.RegularExpressions.Regex.Replace(_payload ?? "", @"0x|[\s:,\-]", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            try { data = Convert.FromHexString(hex); }
+            catch (FormatException) { Snackbar.Add("Hex payload must contain pairs of hex digits, for example 01 0a ff.", Severity.Warning); return; }
+        }
+        else data = Encoding.UTF8.GetBytes(_payload ?? "");
+
+        var error = await Session.PublishAsync(topic, data, _qos, _retain);
+        if (error != null) Snackbar.Add("Publish failed: " + error, Severity.Error);
+        else Snackbar.Add($"Published {data.Length} bytes to {topic}", Severity.Success);
+    }
+}

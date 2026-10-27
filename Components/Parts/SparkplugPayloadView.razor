@@ -1,0 +1,112 @@
+<div class="meta">
+    @if (Payload.MessageType != null)
+    {
+        <TypeChip MessageType="@Payload.MessageType" />
+    }
+    <span>Payload time <b>@Fmt.Full(Payload.Timestamp)</b></span>
+    <span>Seq <b>@(Payload.Seq?.ToString() ?? "–")</b></span>
+    @if (Payload.Uuid != null)
+    {
+        <span>UUID <b>@Payload.Uuid</b></span>
+    }
+    @if (Payload.BodyLength != null)
+    {
+        <span>Body <b>@Payload.BodyLength B</b></span>
+    }
+    <span>Metrics <b>@Payload.Metrics.Count</b></span>
+</div>
+
+@if (Payload.Metrics.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">No metrics in this payload.</MudText>
+}
+else
+{
+    <MudSimpleTable Dense="true" Hover="true" Outlined="true" Elevation="0" Class="metrics">
+        <thead>
+            <tr>
+                <th class="plotcol"></th>
+                <th>Metric</th>
+                <th>Alias</th>
+                <th>Type</th>
+                <th>Value</th>
+                <th>Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var m in Payload.Metrics)
+            {
+                var key = SeriesKeyFor(m);
+                <tr class="@(key != null ? "plottable" : "") @(key != null && Session.IsPlotted(key) ? "plotted" : "")"
+                    @onclick="() => Toggle(key)">
+                    <td class="plotcol">
+                        @if (key != null)
+                        {
+                            <PlotButton Session="Session" SeriesKey="@key" />
+                        }
+                    </td>
+                    <td class="n">
+                        @if (m.Name != null)
+                        {
+                            <text>@m.Name</text>
+                        }
+                        else
+                        {
+                            <span class="mud-text-secondary">unknown alias</span>
+                        }
+                        @if (m.IsHistorical)
+                        {
+                            <span class="flag">historical</span>
+                        }
+                        @if (m.IsTransient)
+                        {
+                            <span class="flag">transient</span>
+                        }
+                        @if (m.NameFromAlias)
+                        {
+                            <span class="sub">name from birth alias</span>
+                        }
+                        @if (m.Properties is { Count: > 0 })
+                        {
+                            <span class="sub">@string.Join(", ", m.Properties.Select(kv => $"{kv.Key}={Fmt.Value(kv.Value)}"))</span>
+                        }
+                        @if (m.Description != null)
+                        {
+                            <span class="sub">@m.Description</span>
+                        }
+                    </td>
+                    <td>@(m.Alias?.ToString() ?? "–")</td>
+                    <td>@m.TypeName</td>
+                    <td class="v"><ValueView Value="m.Value" /></td>
+                    <td class="tm">@Fmt.Time(m.Timestamp)</td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+}
+
+<MudButton Variant="Variant.Text" Class="mt-2" StartIcon="@(_showJson ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.DataObject)"
+           OnClick="() => _showJson = !_showJson">
+    @(_showJson ? "Hide" : "Show") decoded payload as JSON
+</MudButton>
+@if (_showJson)
+{
+    <pre class="mt-1">@Fmt.HighlightJson(Fmt.PrettyJson(Payload))</pre>
+}
+
+@code {
+    [Parameter, EditorRequired] public SpPayload Payload { get; set; } = default!;
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+    /// <summary>group/edge[/device] of the topic; null when the payload was decoded outside the Sparkplug namespace.</summary>
+    [Parameter] public string? SpKey { get; set; }
+
+    private bool _showJson;
+
+    private string? SeriesKeyFor(SpMetric m) =>
+        SpKey != null && m.Name != null && SeriesKeys.ToDouble(m.Value) != null ? SeriesKeys.ForMetric(SpKey, m.Name) : null;
+
+    private void Toggle(string? key)
+    {
+        if (key != null) Session.TogglePlot(key);
+    }
+}

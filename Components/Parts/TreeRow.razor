@@ -1,0 +1,37 @@
+@{
+    var n = Row;
+    var last = n.Topic?.History.FirstOrDefault();
+    if (n.SeenCount != n.MessageCount)
+    {
+        if (n.SeenCount >= 0) n.FlashToggle = !n.FlashToggle;
+        n.SeenCount = n.MessageCount;
+    }
+}
+<div class="tn @(Selected && n.Topic != null ? "sel" : "")" style="--d:@Depth" role="treeitem"
+     aria-expanded="@(n.Children.Count > 0 ? (Open ? "true" : "false") : null)" @onclick="() => OnSelect.InvokeAsync(n)">
+    <span class="caret" @onclick="() => OnToggle.InvokeAsync(n)" @onclick:stopPropagation="true">
+        @if (n.Children.Count > 0)
+        {
+            <MudIcon Icon="@(Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)" Size="Size.Small" />
+        }
+    </span>
+    <span class="nm">@(n.Name.Length == 0 ? "(empty)" : n.Name)</span>
+    @if (last != null)
+    {
+        <span class="pv @(last.Sparkplug != null ? "sp" : "") @(n.FlashToggle ? "fa" : "fb")">@last.Preview</span>
+    }
+    <span class="ct">@CountText</span>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TreeNode Row { get; set; } = default!;
+    [Parameter] public int Depth { get; set; }
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public bool Selected { get; set; }
+    [Parameter] public EventCallback<TreeNode> OnSelect { get; set; }
+    [Parameter] public EventCallback<TreeNode> OnToggle { get; set; }
+
+    private string CountText => Row.Children.Count > 0
+        ? $"{Row.TopicCount} topic{(Row.TopicCount == 1 ? "" : "s")}, {Row.MessageCount} msg"
+        : Row.MessageCount.ToString();
+}

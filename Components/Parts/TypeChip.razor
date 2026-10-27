@@ -1,0 +1,13 @@
+<MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="ChipColor" Class="mono">@MessageType</MudChip>
+
+@code {
+    [Parameter, EditorRequired] public string MessageType { get; set; } = "";
+
+    private Color ChipColor => MessageType switch
+    {
+        _ when MessageType.EndsWith("BIRTH") => Color.Success,
+        _ when MessageType.EndsWith("DEATH") => Color.Error,
+        _ when MessageType.EndsWith("CMD") => Color.Warning,
+        _ => Color.Primary,
+    };
+}

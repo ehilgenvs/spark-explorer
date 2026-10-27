@@ -1,0 +1,43 @@
+@if (Node.Metrics.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary my-1">
+        @(Node.Online == null ? "No metrics recorded, waiting for a birth certificate." : "No metrics recorded.")
+    </MudText>
+}
+else
+{
+    <MudSimpleTable Dense="true" Hover="true" Outlined="true" Elevation="0" Class="metrics">
+        <thead>
+            <tr><th class="plotcol"></th><th>Metric</th><th>Type</th><th>Value</th><th>Time</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var m in Node.Metrics.Values.OrderBy(x => x.Name, NaturalComparer.Instance))
+            {
+                var key = SeriesKeys.ToDouble(m.Value) != null ? SeriesKeys.ForMetric(Node.Key, m.Name) : null;
+                <tr class="@(key != null ? "plottable" : "") @(key != null && Session.IsPlotted(key) ? "plotted" : "")"
+                    @onclick="() => Toggle(key)">
+                    <td class="plotcol">
+                        @if (key != null)
+                        {
+                            <PlotButton Session="Session" SeriesKey="@key" />
+                        }
+                    </td>
+                    <td class="n">@m.Name</td>
+                    <td>@m.TypeName</td>
+                    <td class="v"><ValueView Value="m.Value" /></td>
+                    <td class="tm">@Fmt.Time(m.Timestamp)</td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+}
+
+@code {
+    [Parameter, EditorRequired] public SpNodeState Node { get; set; } = default!;
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+
+    private void Toggle(string? key)
+    {
+        if (key != null) Session.TogglePlot(key);
+    }
+}
