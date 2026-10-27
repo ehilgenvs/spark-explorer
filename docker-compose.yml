@@ -11,21 +11,5 @@ services:
       Mqtt__Host: "mosquitto"
       Mqtt__Port: "1883"
       Mqtt__WebSocketUri: "ws://mosquitto:9001"
-      Mqtt__Subscriptions: "#,$$SYS/#"
-    depends_on:
-      - mosquitto
+      Mqtt__Subscriptions: "#,$$SYS/#,spBv1.0/#"
     restart: unless-stopped
-
-  mosquitto:
-    image: eclipse-mosquitto:2.0.18
-    container_name: mosquitto
-    ports:
-      - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro,Z
-      - mosquitto-data:/mosquitto/data:Z
-    restart: unless-stopped
-
-volumes:
-  mosquitto-data:
