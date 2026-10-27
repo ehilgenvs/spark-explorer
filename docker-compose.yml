@@ -1,15 +1,22 @@
 # Spark Explorer + a Mosquitto broker (MQTT over TCP and WebSocket).
 #
+# Standalone: this file is all you need. The app is built straight from GitHub
+# and the broker configuration is included below.
+#
 #   docker compose up -d --build
 #   open http://localhost:8080
 #
-# The app is preconfigured for the bundled broker (host "mosquitto"). To use your own broker
-# instead, change the Mqtt__* values below, or just type its address in the app.
-# A broker running on the Docker host itself is reachable as "host.docker.internal".
+# To rebuild after new commits are pushed:
+#   docker compose build --no-cache spark-explorer && docker compose up -d
+#
+# Requires Docker Compose v2.23.1 or newer (for the inline broker config).
 
 services:
   spark-explorer:
-    build: .
+    build:
+      # Builds the main branch of the GitHub repository using its Dockerfile.
+      # Pin a tag or commit instead of "main" for repeatable builds, e.g. ...spark-explorer.git#v1.0
+      context: https://github.com/ehilgenvs/spark-explorer.git#main
     image: spark-explorer:latest
     container_name: spark-explorer
     ports:
@@ -18,7 +25,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       # Defaults shown in the connection bar (see the "Mqtt" section of appsettings.json)
       Mqtt__Transport: Tcp      # Tcp or WebSocket
-      Mqtt__Host: mosquitto
+      Mqtt__Host: mosquitto     # the bundled broker; use host.docker.internal for a broker on this machine
       Mqtt__Port: "1883"
       Mqtt__WebSocketUri: ws://mosquitto:9001
       Mqtt__Subscriptions: "#, $$SYS/#"   # $$ escapes $ in compose files
@@ -34,10 +41,28 @@ services:
     ports:
       - "1883:1883"            # MQTT over TCP
       - "9001:9001"            # MQTT over WebSocket
+    configs:
+      - source: mosquitto-conf
+        target: /mosquitto/config/mosquitto.conf
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
     restart: unless-stopped
+
+configs:
+  mosquitto-conf:
+    # Anonymous access is fine for local testing, not for a network you don't control.
+    # To require logins, set allow_anonymous false and add a password_file.
+    content: |
+      persistence true
+      persistence_location /mosquitto/data/
+
+      listener 1883
+      protocol mqtt
+
+      listener 9001
+      protocol websockets
+
+      allow_anonymous true
 
 volumes:
   mosquitto-data:
