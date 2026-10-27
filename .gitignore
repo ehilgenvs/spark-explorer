@@ -2,3 +2,9 @@ bin/
 obj/
 .vs/
 *.user
+
+# Saved brokers (may contain passwords) and uploaded certificates/keys
+appsettings.brokers.json
+appsettings.brokers.json.tmp
+certs/
+data/

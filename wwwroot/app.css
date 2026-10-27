@@ -20,6 +20,10 @@ html, body { height: 100%; margin: 0; }
 .conn-row > .mud-input-control { margin-top: 0; }
 .conn-row.options { padding: 4px 0 6px; }
 /* MudBlazor inputs grow to fill a row by default; these fix their widths. */
+.mud-input-control.f-broker { flex: 0 0 240px; min-width: 0; }
+.mud-select:has(> .f-broker) { flex: 0 0 240px; }
+.broker-summary { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; color: var(--muted); font-size: 13px; min-width: 0; }
+.broker-summary .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mud-input-control.f-transport { flex: 0 0 140px; min-width: 0; }
 /* MudSelect wraps its input in a div.mud-select, which is the actual flex item. */
 .mud-select:has(> .f-transport) { flex: 0 0 140px; }
@@ -110,6 +114,16 @@ table.inner th, table.inner td { padding: 2px 6px; border-bottom: 1px solid var(
 .node .bd { padding: 0 12px 12px; }
 .node .device { margin: 12px 0 0 14px; border-left: 3px solid var(--line); padding-left: 10px; }
 .node .device .hd { padding: 4px 0; }
+
+/* broker dialog */
+.broker-dialog .section { margin: 16px 0 4px; }
+.broker-dialog .section:first-child { margin-top: 0; }
+.broker-dialog .section-head { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; }
+.broker-dialog .form-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: flex-start; }
+.broker-dialog .form-row > .grow, .broker-dialog .form-row > .mud-input-control.grow { flex: 1 1 220px; min-width: 0; }
+.broker-dialog .form-row .mud-input-control { margin-top: 8px; }
+.broker-dialog .form-row .upload { margin-top: 12px; flex: none; }
+.broker-dialog .hint { display: block; color: var(--muted); margin: 0 0 4px; max-width: 75ch; }
 
 /* publish */
 .pub { display: grid; gap: 10px; max-width: 780px; }

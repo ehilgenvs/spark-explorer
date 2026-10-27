@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using System.Net.Security;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using MQTTnet;
 using MQTTnet.Client;
@@ -19,6 +22,8 @@ public sealed class MqttSession : IAsyncDisposable
     private const int SeriesLimit = 10_000;
 
     private readonly ILogger<MqttSession> _log;
+    private readonly BrokerStore _store;
+    private volatile string? _lastTlsError;
     private readonly ConcurrentQueue<Incoming> _queue = new();
     private readonly SparkplugDecoder _decoder = new();
     private readonly object _demoLock = new();
@@ -35,13 +40,18 @@ public sealed class MqttSession : IAsyncDisposable
     private int _rateCount;
     private DateTime _rateStart = DateTime.UtcNow;
 
-    public MqttSession(IConfiguration config, ILogger<MqttSession> log)
+    public MqttSession(BrokerStore store, ILogger<MqttSession> log)
     {
         _log = log;
-        config.GetSection("Mqtt").Bind(Settings);
+        _store = store;
+        Settings = store.All.FirstOrDefault() ?? new ConnectionSettings();
     }
 
-    public ConnectionSettings Settings { get; } = new();
+    /// <summary>The broker profile used by the next Connect (a working copy of a saved broker).</summary>
+    public ConnectionSettings Settings { get; set; }
+
+    /// <summary>Raised (on any thread) when the connection state or status text changes.</summary>
+    public event Action? StatusChanged;
     public ConnState State { get; private set; } = ConnState.Disconnected;
     public string StatusText { get; private set; } = "Disconnected";
     public bool IsConnected => _client?.IsConnected == true;
@@ -66,6 +76,7 @@ public sealed class MqttSession : IAsyncDisposable
     {
         await DisconnectAsync();
         _userDisconnect = false;
+        _lastTlsError = null;
 
         var s = Settings.Clone();
         MqttClientOptions options;
@@ -75,7 +86,10 @@ public sealed class MqttSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SetStatus(ConnState.Error, ex.Message);
+            var message = ex.Message;
+            if (!s.SavePasswords && string.IsNullOrEmpty(s.Tls?.ClientCertificatePassword) && !string.IsNullOrWhiteSpace(s.Tls?.ClientCertificatePath))
+                message += " This broker's passwords aren't saved: open its settings and enter the certificate password.";
+            SetStatus(ConnState.Error, message);
             return;
         }
 
@@ -98,7 +112,7 @@ public sealed class MqttSession : IAsyncDisposable
 
         client.ConnectedAsync += e =>
         {
-            SetStatus(ConnState.Connected, $"Connected to {s.Describe()}");
+            SetStatus(ConnState.Connected, $"Connected to {s.Name} ({s.Describe()})");
             _ = Task.Run(() => SubscribeAsync(client, s));
             return Task.CompletedTask;
         };
@@ -112,7 +126,7 @@ public sealed class MqttSession : IAsyncDisposable
             return Task.CompletedTask;
         };
 
-        SetStatus(ConnState.Connecting, $"Connecting to {s.Describe()}…");
+        SetStatus(ConnState.Connecting, $"Connecting to {s.Name} ({s.Describe()})…");
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -122,7 +136,13 @@ public sealed class MqttSession : IAsyncDisposable
         {
             if (_client != client) return;
             _log.LogWarning(ex, "MQTT connect to {Broker} failed", s.Describe());
-            SetStatus(ConnState.Error, "Connect failed: " + Innermost(ex).Message);
+            var message = _lastTlsError ?? Innermost(ex).Message;
+            // A broker that requires a client certificate just drops the TLS connection without saying why.
+            if (_lastTlsError == null && s.UseTls && string.IsNullOrWhiteSpace(s.Tls.ClientCertificatePath) && ex is not MQTTnet.Adapter.MqttConnectingFailedException)
+                message += ". If this broker requires a client certificate, add one in the broker's TLS settings.";
+            if (ex is MQTTnet.Adapter.MqttConnectingFailedException && !string.IsNullOrEmpty(s.Username) && string.IsNullOrEmpty(s.Password) && !s.SavePasswords)
+                message += ". This broker's password isn't saved: open its settings and enter it.";
+            SetStatus(ConnState.Error, "Connect failed: " + message);
             _client = null;
             client.Dispose();
         }
@@ -148,7 +168,7 @@ public sealed class MqttSession : IAsyncDisposable
         if (State != ConnState.Disconnected) SetStatus(ConnState.Disconnected, "Disconnected");
     }
 
-    private static MqttClientOptions BuildOptions(ConnectionSettings s)
+    private MqttClientOptions BuildOptions(ConnectionSettings s)
     {
         var b = new MqttClientOptionsBuilder()
             .WithClientId(string.IsNullOrWhiteSpace(s.ClientId) ? "spark-explorer-" + Guid.NewGuid().ToString("N")[..6] : s.ClientId.Trim())
@@ -175,15 +195,72 @@ public sealed class MqttSession : IAsyncDisposable
 
         if (useTls)
         {
+            var tls = s.Tls ?? new TlsSettings();
+            var ca = string.IsNullOrWhiteSpace(tls.CaCertificatePath)
+                ? null
+                : CertificateFiles.LoadCaCertificates(_store.ResolvePath(tls.CaCertificatePath)!);
+            var client = string.IsNullOrWhiteSpace(tls.ClientCertificatePath)
+                ? null
+                : CertificateFiles.LoadClientCertificate(_store.ResolvePath(tls.ClientCertificatePath)!,
+                    _store.ResolvePath(tls.ClientKeyPath), tls.ClientCertificatePassword);
+
             b.WithTlsOptions(o =>
             {
                 o.UseTls();
-                if (s.AllowUntrustedCertificates) o.WithCertificateValidationHandler(_ => true);
+                // One handler for TCP and WebSocket (MQTTnet applies a custom trust chain only on TCP).
+                o.WithCertificateValidationHandler(e => ValidateServerCertificate(e, tls, ca));
+                if (client != null) o.WithClientCertificates(new X509Certificate2Collection(client));
+                if (!tls.CheckRevocation) o.WithIgnoreCertificateRevocationErrors().WithRevocationMode(X509RevocationMode.NoCheck);
+                if (tls.Version == "Tls12") o.WithSslProtocols(SslProtocols.Tls12);
+                else if (tls.Version == "Tls13") o.WithSslProtocols(SslProtocols.Tls13);
+                if (!string.IsNullOrWhiteSpace(tls.ServerName)) o.WithTargetHost(tls.ServerName.Trim());
             });
         }
 
         if (!string.IsNullOrEmpty(s.Username)) b.WithCredentials(s.Username, s.Password ?? "");
         return b.Build();
+    }
+
+    /// <summary>
+    /// Accepts certificates trusted by the system, or chaining to the configured CA certificate.
+    /// The host name must always match unless untrusted certificates are allowed.
+    /// </summary>
+    private bool ValidateServerCertificate(MqttClientCertificateValidationEventArgs e, TlsSettings tls, X509Certificate2Collection? ca)
+    {
+        if (tls.AllowUntrustedCertificates) return true;
+        var errors = e.SslPolicyErrors;
+        if (errors == SslPolicyErrors.None) return true;
+        if (errors.HasFlag(SslPolicyErrors.RemoteCertificateNotAvailable))
+        {
+            _lastTlsError = "The broker did not send a TLS certificate.";
+            return false;
+        }
+        if (errors.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch))
+        {
+            using var c = new X509Certificate2(e.Certificate);
+            _lastTlsError = $"The broker's certificate is issued to \"{c.GetNameInfo(X509NameType.DnsName, false)}\", not the address you connected to. "
+                + "Connect using that name, or enter it as Server name in the TLS settings.";
+            return false;
+        }
+
+        using var cert = new X509Certificate2(e.Certificate);
+        using var chain = new X509Chain();
+        chain.ChainPolicy.RevocationMode = tls.CheckRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck;
+        if (ca is { Count: > 0 })
+        {
+            chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+            chain.ChainPolicy.CustomTrustStore.AddRange(ca);
+            chain.ChainPolicy.ExtraStore.AddRange(ca);
+        }
+        if (e.Chain != null)
+            foreach (var element in e.Chain.ChainElements) chain.ChainPolicy.ExtraStore.Add(element.Certificate);
+        if (chain.Build(cert)) return true;
+
+        var reasons = string.Join("; ", chain.ChainStatus.Select(st => st.StatusInformation.Trim().TrimEnd('.')).Where(r => r.Length > 0).Distinct());
+        _lastTlsError = $"The broker's certificate is not trusted ({reasons}). "
+            + (ca == null ? "Add the CA certificate that signed it" : "Check that the CA certificate is the one that signed the broker's certificate")
+            + ", or allow untrusted certificates for testing.";
+        return false;
     }
 
     private async Task SubscribeAsync(IMqttClient client, ConnectionSettings s)
@@ -200,8 +277,8 @@ public sealed class MqttSession : IAsyncDisposable
             var result = await client.SubscribeAsync(builder.Build());
             var rejected = result.Items.Where(i => (int)i.ResultCode > 2).Select(i => i.TopicFilter.Topic).ToList();
             SetStatus(ConnState.Connected, rejected.Count == 0
-                ? $"Connected to {s.Describe()}"
-                : $"Connected to {s.Describe()}; broker refused {string.Join(", ", rejected)}");
+                ? $"Connected to {s.Name} ({s.Describe()})"
+                : $"Connected to {s.Name}; broker refused {string.Join(", ", rejected)}");
         }
         catch (Exception ex)
         {
@@ -277,6 +354,7 @@ public sealed class MqttSession : IAsyncDisposable
         State = state;
         StatusText = text;
         _statusChanged = true;
+        StatusChanged?.Invoke();
     }
 
     private static Exception Innermost(Exception ex)

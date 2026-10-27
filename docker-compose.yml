@@ -12,4 +12,12 @@ services:
       Mqtt__Port: "1883"
       Mqtt__WebSocketUri: "ws://mosquitto:9001"
       Mqtt__Subscriptions: "#,$$SYS/#,spBv1.0/#"
+      # Saved brokers and uploaded certificates are kept on the volume below.
+      # The Mqtt__* values above only seed the first broker when that file doesn't exist yet.
+      BrokerStore__Path: "/app/data/appsettings.brokers.json"
+    volumes:
+      - spark-data:/app/data
     restart: unless-stopped
+
+volumes:
+  spark-data:

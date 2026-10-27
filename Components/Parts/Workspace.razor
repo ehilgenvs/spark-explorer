@@ -1,0 +1,206 @@
+@* Everything that shows live data. It refreshes itself a few times per second; the app bar and
+   connection controls in the page around it do not re-render with it, so menus and tooltips there stay steady. *@
+@implements IAsyncDisposable
+
+<div class="workspace">
+    <MudPaper Square="true" Elevation="0" Class="side">
+        <div class="sidebar-top">
+            <MudTextField T="string" @bind-Value="_filter" Immediate="true" DebounceInterval="150" Placeholder="Filter topics"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
+            <MudTooltip Text="@(_paused ? "Resume refreshing" : "Pause refreshing (messages are still recorded)")">
+                <MudIconButton Icon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
+                               Color="@(_paused ? Color.Warning : Color.Default)" OnClick="TogglePause" aria-label="Pause" />
+            </MudTooltip>
+            <MudTooltip Text="Forget all received messages">
+                <MudIconButton Icon="@Icons.Material.Filled.DeleteSweep" OnClick="Clear" aria-label="Clear" />
+            </MudTooltip>
+        </div>
+        <div class="tree" role="tree">
+            @if (Session.Topics.Count == 0)
+            {
+                <div class="empty">
+                    <MudText Typo="Typo.subtitle2">No messages yet</MudText>
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                        Choose TCP or WebSocket, enter your broker's address and press Connect.
+                        Or press Start demo to see simulated plant traffic with Sparkplug B nodes.
+                    </MudText>
+                </div>
+            }
+            else
+            {
+                var rows = BuildRows();
+                if (rows.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="empty mud-text-secondary">No topics match this filter.</MudText>
+                }
+                <Virtualize Items="rows" ItemSize="28" OverscanCount="30" Context="r">
+                    <TreeRow Row="r.Node" Depth="r.Depth" Open="r.Open" Selected="@(r.Node.Path == _selected)"
+                             OnSelect="RowClick" OnToggle="Toggle" />
+                </Virtualize>
+            }
+        </div>
+    </MudPaper>
+
+    <div class="right">
+        <MudTabs @bind-ActivePanelIndex="_tabIndex" Elevation="0" Class="tabs" Border="false">
+            <MudTabPanel Text="Topic" Icon="@Icons.Material.Filled.Article">
+                <div class="tab-body">
+                <TopicDetails Session="Session" Topic="SelectedTopic" Selected="_selectedMsg" SelectedChanged="m => _selectedMsg = m"
+                              Format="@_format" FormatChanged="f => _format = f" />
+                </div>
+            </MudTabPanel>
+            <MudTabPanel Text="Sparkplug nodes" Icon="@Icons.Material.Filled.AccountTree">
+                <div class="tab-body"><SparkplugNodes Session="Session" Collapsed="_collapsed" /></div>
+            </MudTabPanel>
+            <MudTabPanel Text="Publish" Icon="@Icons.Material.Filled.Send">
+                <div class="tab-body"><PublishPanel Session="Session" SelectedTopic="@_selected" /></div>
+            </MudTabPanel>
+        </MudTabs>
+
+        @if (Session.Plotted.Count > 0)
+        {
+            <ChartPanel Session="Session" />
+        }
+    </div>
+</div>
+
+<footer class="statusbar">
+    <span>Topics <b>@Session.Topics.Count</b></span>
+    <span>Messages <b>@Session.TotalMessages</b></span>
+    <span>Rate <b>@Session.Rate</b>/s</span>
+    <span>Sparkplug edge nodes <b>@Session.SpNodes.Values.Count(n => n.Device == null)</b></span>
+    <span>Data points <b>@Session.Series.Count</b></span>
+    @if (Session.Dropped > 0)
+    {
+        <span class="mud-error-text">Dropped <b>@Session.Dropped</b> (the view could not keep up)</span>
+    }
+    @if (_paused)
+    {
+        <span class="mud-warning-text"><b>View paused</b>, messages are still recorded</span>
+    }
+</footer>
+
+@code {
+    private const int MaxRows = 20_000;
+
+    [Parameter, EditorRequired] public MqttSession Session { get; set; } = default!;
+
+    private readonly record struct Row(TreeNode Node, int Depth, bool Open);
+
+    private readonly CancellationTokenSource _cts = new();
+    private readonly HashSet<string> _expanded = new();
+    private readonly HashSet<string> _collapsed = new();
+    private string _filter = "";
+    private string? _selected;
+    private MqttMessage? _selectedMsg;
+    private string _format = "auto";
+    private int _tabIndex;
+    private bool _paused;
+
+    private TopicData? SelectedTopic => _selected != null && Session.Topics.TryGetValue(_selected, out var t) ? t : null;
+
+    protected override void OnInitialized()
+    {
+        Session.PlotsChanged += OnPlotsChanged;
+        _ = RefreshLoopAsync();
+    }
+
+    private void OnPlotsChanged() => InvokeAsync(StateHasChanged);
+
+    // Applies incoming messages on the renderer's sync context a few times per second.
+    private async Task RefreshLoopAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(400));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                await InvokeAsync(() =>
+                {
+                    if (Session.Drain() && !_paused) StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>Selects and reveals the first demo topic when nothing is selected yet.</summary>
+    public void ShowDemoTopic()
+    {
+        if (_selected != null) return;
+        _selected = DemoGenerator.FirstTopic;
+        var parts = _selected.Split('/');
+        for (var i = 1; i < parts.Length; i++) _expanded.Add(string.Join('/', parts, 0, i));
+        _expanded.Add("factory");
+        _expanded.Add("factory/line1");
+        StateHasChanged();
+    }
+
+    private void TogglePause() => _paused = !_paused;
+
+    private void Clear()
+    {
+        Session.Clear();
+        _selected = null;
+        _selectedMsg = null;
+    }
+
+    private void Toggle(TreeNode n)
+    {
+        if (n.Children.Count == 0) return;
+        if (!_expanded.Remove(n.Path)) _expanded.Add(n.Path);
+    }
+
+    private void RowClick(TreeNode n)
+    {
+        if (n.Topic != null)
+        {
+            if (_selected == n.Path) Toggle(n);
+            _selected = n.Path;
+            _selectedMsg = null;
+            _tabIndex = 0;
+        }
+        else Toggle(n);
+    }
+
+    private List<Row> BuildRows()
+    {
+        var rows = new List<Row>();
+        HashSet<string>? visible = null;
+        var f = (_filter ?? "").Trim();
+        if (f.Length > 0)
+        {
+            visible = new HashSet<string>();
+            foreach (var topic in Session.Topics.Keys)
+            {
+                if (!topic.Contains(f, StringComparison.OrdinalIgnoreCase)) continue;
+                var parts = topic.Split('/');
+                for (var i = 1; i <= parts.Length; i++) visible.Add(string.Join('/', parts, 0, i));
+            }
+        }
+
+        void Walk(TreeNode node, int depth)
+        {
+            foreach (var c in node.SortedChildren)
+            {
+                if (rows.Count >= MaxRows) return;
+                if (visible != null && !visible.Contains(c.Path)) continue;
+                var open = visible != null || _expanded.Contains(c.Path);
+                rows.Add(new Row(c, depth, open));
+                if (open && c.Children.Count > 0) Walk(c, depth + 1);
+            }
+        }
+        Walk(Session.Root, 0);
+        return rows;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Session.PlotsChanged -= OnPlotsChanged;
+        _cts.Cancel();
+        _cts.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

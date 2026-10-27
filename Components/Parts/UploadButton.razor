@@ -1,0 +1,39 @@
+@* Uploads a certificate or key file into the settings folder and reports its relative path. *@
+@inject BrokerStore Store
+@inject ISnackbar Snackbar
+
+<MudFileUpload T="IBrowserFile" FilesChanged="Upload" Accept=".pem,.crt,.cer,.der,.key,.pfx,.p12" Class="upload">
+    <CustomContent>
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Upload" OnClick="@context.OpenFilePickerAsync" Disabled="_busy">
+            @Label
+        </MudButton>
+    </CustomContent>
+    <SelectedTemplate>@* the path field shows the uploaded file *@</SelectedTemplate>
+</MudFileUpload>
+
+@code {
+    [Parameter] public string Label { get; set; } = "Upload";
+    [Parameter] public EventCallback<string> OnUploaded { get; set; }
+
+    private bool _busy;
+
+    private async Task Upload(IBrowserFile? file)
+    {
+        if (file is null) return;
+        _busy = true;
+        try
+        {
+            var path = await Store.SaveCertificateAsync(file);
+            await OnUploaded.InvokeAsync(path);
+            Snackbar.Add($"Uploaded {file.Name} to {path}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Upload failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

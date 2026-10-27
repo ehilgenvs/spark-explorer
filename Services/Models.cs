@@ -15,27 +15,66 @@ public enum TransportKind { Tcp, WebSocket }
 
 public enum ConnState { Disconnected, Connecting, Connected, Reconnecting, Error }
 
+/// <summary>A saved broker: connection, login, TLS and subscription settings.</summary>
 public sealed class ConnectionSettings
 {
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..12];
+    public string Name { get; set; } = "Local broker";
     public TransportKind Transport { get; set; } = TransportKind.Tcp;
     public string Host { get; set; } = "localhost";
     public int Port { get; set; } = 1883;
     public string WebSocketUri { get; set; } = "ws://localhost:9001";
     public bool UseTls { get; set; }
-    public bool AllowUntrustedCertificates { get; set; }
-    public string ClientId { get; set; } = "spark-explorer-" + Guid.NewGuid().ToString("N")[..6];
+    public TlsSettings Tls { get; set; } = new();
+    public string ClientId { get; set; } = "";
     public string? Username { get; set; }
     public string? Password { get; set; }
+    /// <summary>When false, the password and client-certificate password are kept in memory only, never written to the settings file.</summary>
+    public bool SavePasswords { get; set; }
     /// <summary>4 = MQTT 3.1.1, 5 = MQTT 5.0</summary>
     public int ProtocolVersion { get; set; } = 4;
     public string Subscriptions { get; set; } = "#, $SYS/#";
     public int SubscribeQos { get; set; }
 
-    public ConnectionSettings Clone() => (ConnectionSettings)MemberwiseClone();
+    /// <summary>Kept for appsettings.json files written by earlier versions; use Tls.AllowUntrustedCertificates.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool AllowUntrustedCertificates
+    {
+        get => Tls.AllowUntrustedCertificates;
+        set => Tls.AllowUntrustedCertificates = value;
+    }
+
+    public ConnectionSettings Clone()
+    {
+        var c = (ConnectionSettings)MemberwiseClone();
+        c.Tls = Tls.Clone();
+        return c;
+    }
 
     public string Describe() => Transport == TransportKind.Tcp
         ? $"{(UseTls ? "mqtts" : "mqtt")}://{Host}:{Port}"
         : WebSocketUri;
+}
+
+public sealed class TlsSettings
+{
+    /// <summary>Accept any server certificate. Insecure; for testing only.</summary>
+    public bool AllowUntrustedCertificates { get; set; }
+    /// <summary>Check whether the server certificate was revoked (needs the CA's revocation list to be reachable).</summary>
+    public bool CheckRevocation { get; set; }
+    /// <summary>CA certificate (PEM, CRT or DER) to trust in addition to the system's trusted roots. Relative paths are resolved against the settings file's folder.</summary>
+    public string? CaCertificatePath { get; set; }
+    /// <summary>Client certificate for mutual TLS: PFX/P12, or PEM (with the key inside it or in <see cref="ClientKeyPath"/>).</summary>
+    public string? ClientCertificatePath { get; set; }
+    public string? ClientKeyPath { get; set; }
+    /// <summary>Password of the PFX file or encrypted PEM key.</summary>
+    public string? ClientCertificatePassword { get; set; }
+    /// <summary>Host name expected in the server certificate (and sent as SNI) when it differs from the address you connect to. TCP only.</summary>
+    public string? ServerName { get; set; }
+    /// <summary>Auto, Tls12 or Tls13.</summary>
+    public string Version { get; set; } = "Auto";
+
+    public TlsSettings Clone() => (TlsSettings)MemberwiseClone();
 }
 
 public sealed record Incoming(string Topic, byte[] Payload, int Qos, bool Retain, DateTime Received);

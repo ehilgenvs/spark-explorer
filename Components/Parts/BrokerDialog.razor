@@ -1,0 +1,200 @@
+@inject BrokerStore Store
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<MudDialog Class="broker-dialog">
+    <DialogContent>
+        <MudText Typo="Typo.subtitle2" Class="section">Connection</MudText>
+        <div class="form-row">
+            <MudTextField T="string" @bind-Value="P.Name" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense"
+                          Required="true" Class="grow" />
+            <MudSelect T="TransportKind" Value="P.Transport" ValueChanged="TransportChanged" Label="Transport" Variant="Variant.Outlined"
+                       Margin="Margin.Dense" Class="f-transport">
+                <MudSelectItem Value="TransportKind.Tcp">TCP</MudSelectItem>
+                <MudSelectItem Value="TransportKind.WebSocket">WebSocket</MudSelectItem>
+            </MudSelect>
+        </div>
+        <div class="form-row">
+            @if (P.Transport == TransportKind.Tcp)
+            {
+                <MudTextField T="string" @bind-Value="P.Host" Label="Host" Placeholder="broker host name or IP address"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+                <MudNumericField T="int" @bind-Value="P.Port" Label="Port" Min="1" Max="65535" HideSpinButtons="true"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Class="f-port" />
+            }
+            else
+            {
+                <MudTextField T="string" @bind-Value="P.WebSocketUri" Label="WebSocket URL" Placeholder="ws://host:9001/mqtt"
+                              HelperText="Use wss:// for TLS" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+            }
+            <MudSelect T="int" @bind-Value="P.ProtocolVersion" Label="MQTT version" Variant="Variant.Outlined" Margin="Margin.Dense" Class="f-small">
+                <MudSelectItem Value="4">3.1.1</MudSelectItem>
+                <MudSelectItem Value="5">5.0</MudSelectItem>
+            </MudSelect>
+        </div>
+        <div class="form-row">
+            <MudTextField T="string" @bind-Value="P.ClientId" Label="Client ID" HelperText="Leave empty to generate one"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+        </div>
+
+        <MudText Typo="Typo.subtitle2" Class="section">Login</MudText>
+        <div class="form-row">
+            <MudTextField T="string" @bind-Value="P.Username" Label="Username" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+            <MudTextField T="string" @bind-Value="P.Password" Label="Password" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow"
+                          InputType="@(_showPassword ? InputType.Text : InputType.Password)"
+                          Adornment="Adornment.End" AdornmentIcon="@(_showPassword ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                          OnAdornmentClick="() => _showPassword = !_showPassword" AdornmentAriaLabel="Show password" />
+        </div>
+        <MudCheckBox T="bool" @bind-Value="P.SavePasswords" Label="Save passwords in the settings file" Dense="true" />
+        <MudText Typo="Typo.caption" Class="hint">
+            @(P.SavePasswords
+                ? "Passwords are stored as plain text in the settings file. Anyone who can read that file can read them."
+                : "Passwords are kept only while this browser tab is open, and you'll need to enter them again later.")
+        </MudText>
+
+        <div class="section-head">
+            <MudText Typo="Typo.subtitle2">TLS</MudText>
+            <MudSwitch T="bool" Value="P.UseTls" ValueChanged="TlsChanged" Color="Color.Primary" Label="@(P.UseTls ? "On" : "Off")" />
+        </div>
+        @if (P.UseTls)
+        {
+            <MudText Typo="Typo.caption" Class="hint">
+                The broker's certificate is accepted when the system trusts it, or when it was signed by the CA certificate below.
+                Certificate paths are relative to the folder of the settings file; uploaded files are stored in its certs folder.
+            </MudText>
+            <div class="form-row">
+                <MudTextField T="string" @bind-Value="P.Tls.CaCertificatePath" Label="CA certificate" Placeholder="certs/ca.crt"
+                              HelperText="PEM, CRT or DER. Needed for brokers with a private or self-signed CA."
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" Clearable="true" />
+                <UploadButton Label="Upload CA" OnUploaded="p => P.Tls.CaCertificatePath = p" />
+            </div>
+            <div class="form-row">
+                <MudTextField T="string" @bind-Value="P.Tls.ClientCertificatePath" Label="Client certificate (optional)" Placeholder="certs/client.pfx"
+                              HelperText="For brokers that require client certificates: PFX/P12, or PEM"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" Clearable="true" />
+                <UploadButton Label="Upload" OnUploaded="p => P.Tls.ClientCertificatePath = p" />
+            </div>
+            <div class="form-row">
+                <MudTextField T="string" @bind-Value="P.Tls.ClientKeyPath" Label="Client key (PEM, optional)" Placeholder="certs/client.key"
+                              HelperText="Only when the key is in a separate PEM file"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" Clearable="true" />
+                <UploadButton Label="Upload" OnUploaded="p => P.Tls.ClientKeyPath = p" />
+                <MudTextField T="string" @bind-Value="P.Tls.ClientCertificatePassword" Label="Certificate password" InputType="InputType.Password"
+                              HelperText="For PFX files or encrypted keys" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+            </div>
+            <div class="form-row">
+                <MudTextField T="string" @bind-Value="P.Tls.ServerName" Label="Server name (optional)" Placeholder="broker.example.com"
+                              HelperText="@(P.Transport == TransportKind.Tcp ? "Name in the broker's certificate, when you connect by IP or another name" : "TCP only; for WebSocket, use that name in the URL")"
+                              Disabled="@(P.Transport != TransportKind.Tcp)" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+                <MudSelect T="string" @bind-Value="P.Tls.Version" Label="TLS version" Variant="Variant.Outlined" Margin="Margin.Dense" Class="f-small">
+                    <MudSelectItem Value="@("Auto")">Auto</MudSelectItem>
+                    <MudSelectItem Value="@("Tls12")">TLS 1.2</MudSelectItem>
+                    <MudSelectItem Value="@("Tls13")">TLS 1.3</MudSelectItem>
+                </MudSelect>
+            </div>
+            <MudCheckBox T="bool" @bind-Value="P.Tls.CheckRevocation" Label="Check certificate revocation" Dense="true" />
+            <MudCheckBox T="bool" @bind-Value="P.Tls.AllowUntrustedCertificates" Label="Accept any server certificate (insecure, for testing only)"
+                         Color="Color.Warning" Dense="true" />
+        }
+
+        <MudText Typo="Typo.subtitle2" Class="section">Subscriptions</MudText>
+        <div class="form-row">
+            <MudTextField T="string" @bind-Value="P.Subscriptions" Label="Subscribe to" HelperText="Comma-separated topic filters, for example #, spBv1.0/#"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+            <MudSelect T="int" @bind-Value="P.SubscribeQos" Label="QoS" Variant="Variant.Outlined" Margin="Margin.Dense" Class="f-small">
+                <MudSelectItem Value="0">0</MudSelectItem>
+                <MudSelectItem Value="1">1</MudSelectItem>
+                <MudSelectItem Value="2">2</MudSelectItem>
+            </MudSelect>
+        </div>
+
+        @if (_error != null)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        @if (!IsNew)
+        {
+            <MudButton Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="Delete">Delete</MudButton>
+        }
+        <MudSpacer />
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="() => Save(false)">Save</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => Save(true)">Save and connect</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public ConnectionSettings Profile { get; set; } = default!;
+    [Parameter] public bool IsNew { get; set; }
+
+    private ConnectionSettings P => Profile;
+    private bool _showPassword;
+    private string? _error;
+
+    private void TransportChanged(TransportKind t)
+    {
+        P.Transport = t;
+        TlsChanged(P.UseTls);
+    }
+
+    private void TlsChanged(bool on)
+    {
+        P.UseTls = on;
+        if (P.Transport == TransportKind.Tcp)
+        {
+            if (on && P.Port == 1883) P.Port = 8883;
+            else if (!on && P.Port == 8883) P.Port = 1883;
+        }
+        else if (on && P.WebSocketUri.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+        {
+            P.WebSocketUri = "wss://" + P.WebSocketUri[5..];
+        }
+        else if (!on && P.WebSocketUri.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+        {
+            P.WebSocketUri = "ws://" + P.WebSocketUri[6..];
+        }
+    }
+
+    private string? Validate()
+    {
+        if (string.IsNullOrWhiteSpace(P.Name)) return "Enter a name for this broker.";
+        if (P.Transport == TransportKind.Tcp)
+        {
+            if (string.IsNullOrWhiteSpace(P.Host)) return "Enter the broker's host name or IP address.";
+            if (P.Port is < 1 or > 65535) return "Enter a port between 1 and 65535.";
+        }
+        else if (!Uri.TryCreate(P.WebSocketUri?.Trim(), UriKind.Absolute, out var u) || (u.Scheme != "ws" && u.Scheme != "wss"))
+        {
+            return "Enter a WebSocket URL that starts with ws:// or wss://.";
+        }
+        if (P.UseTls)
+        {
+            foreach (var (label, path) in new[] { ("CA certificate", P.Tls.CaCertificatePath), ("Client certificate", P.Tls.ClientCertificatePath), ("Client key", P.Tls.ClientKeyPath) })
+            {
+                var full = Store.ResolvePath(path);
+                if (full != null && !File.Exists(full)) return $"{label} file not found: {full}";
+            }
+            if (!string.IsNullOrWhiteSpace(P.Tls.ClientKeyPath) && string.IsNullOrWhiteSpace(P.Tls.ClientCertificatePath))
+                return "Add the client certificate that belongs to the client key.";
+        }
+        return null;
+    }
+
+    private void Save(bool connect)
+    {
+        _error = Validate();
+        if (_error != null) return;
+        P.Name = P.Name.Trim();
+        MudDialog.Close(DialogResult.Ok(new BrokerDialogResult(P, connect, Deleted: false)));
+    }
+
+    private async Task Delete()
+    {
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete broker", $"Delete \"{P.Name}\" from the saved brokers?",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed == true) MudDialog.Close(DialogResult.Ok(new BrokerDialogResult(P, Connect: false, Deleted: true)));
+    }
+}

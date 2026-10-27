@@ -1,6 +1,9 @@
 @page "/"
-@implements IAsyncDisposable
+@implements IDisposable
 @inject MqttSession Session
+@inject BrokerStore Store
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
 
 <PageTitle>Spark Explorer</PageTitle>
 
@@ -15,7 +18,8 @@
         <MudText Typo="Typo.h6">Spark Explorer</MudText>
         <MudSpacer />
         <MudTooltip Text="@Session.StatusText">
-            <MudChip T="string" Size="Size.Small" Color="StatusColor" Variant="Variant.Filled" Icon="@StatusIcon" Class="@(Session.State == ConnState.Disconnected ? "status-chip idle" : "status-chip")">
+            <MudChip T="string" Size="Size.Small" Color="StatusColor" Variant="Variant.Filled" Icon="@StatusIcon"
+                     Class="@(Session.State == ConnState.Disconnected ? "status-chip idle" : "status-chip")">
                 @Session.StatusText
             </MudChip>
         </MudTooltip>
@@ -31,154 +35,52 @@
 
     <MudPaper Square="true" Elevation="0" Class="connbar">
         <div class="conn-row">
-            <MudSelect T="TransportKind" @bind-Value="S.Transport" Label="Transport" Variant="Variant.Outlined" Margin="Margin.Dense"
-                       Disabled="Busy" Class="f-transport">
-                <MudSelectItem Value="TransportKind.Tcp">TCP</MudSelectItem>
-                <MudSelectItem Value="TransportKind.WebSocket">WebSocket</MudSelectItem>
+            <MudSelect T="string" Value="_brokerId" ValueChanged="SelectBroker" Label="Broker" Variant="Variant.Outlined"
+                       Margin="Margin.Dense" Disabled="Busy" Class="f-broker">
+                @foreach (var b in _brokers)
+                {
+                    <MudSelectItem Value="@b.Id">@b.Name</MudSelectItem>
+                }
             </MudSelect>
-            @if (S.Transport == TransportKind.Tcp)
-            {
-                <MudTextField T="string" @bind-Value="S.Host" Label="Host" Placeholder="broker host or IP" Variant="Variant.Outlined"
-                              Margin="Margin.Dense" Disabled="Busy" Class="f-host" />
-                <MudNumericField T="int" @bind-Value="S.Port" Label="Port" Min="1" Max="65535" HideSpinButtons="true"
-                                 Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="Busy" Class="f-port" />
-            }
-            else
-            {
-                <MudTextField T="string" @bind-Value="S.WebSocketUri" Label="WebSocket URL" Placeholder="ws://host:9001/mqtt"
-                              Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="Busy" Class="f-url" />
-            }
-            <MudCheckBox T="bool" Value="S.UseTls" ValueChanged="TlsChanged" Label="TLS" Disabled="Busy" />
+            <div class="broker-summary">
+                <span class="mono">@S.Describe()</span>
+                @if (S.UseTls)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Lock"
+                             Color="@(S.Tls.AllowUntrustedCertificates ? Color.Warning : Color.Success)">
+                        @(S.Tls.AllowUntrustedCertificates ? "TLS, any certificate" : "TLS")
+                    </MudChip>
+                }
+                @if (!string.IsNullOrEmpty(S.Username))
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Person">@S.Username</MudChip>
+                }
+            </div>
+            <MudSpacer />
             <MudButton Variant="Variant.Filled" Color="@(Busy ? Color.Default : Color.Primary)" OnClick="ToggleConnect"
                        StartIcon="@(Busy ? Icons.Material.Filled.LinkOff : Icons.Material.Filled.Link)">
                 @(Busy ? "Disconnect" : "Connect")
             </MudButton>
-            <MudTooltip Text="Connection options">
-                <MudIconButton Icon="@Icons.Material.Filled.Tune" Color="@(_showOptions ? Color.Primary : Color.Default)"
-                               OnClick="() => _showOptions = !_showOptions" aria-label="Connection options" />
+            <MudTooltip Text="Edit this broker's settings">
+                <MudIconButton Icon="@Icons.Material.Filled.Settings" OnClick="EditBroker" Disabled="Busy" aria-label="Edit broker" />
+            </MudTooltip>
+            <MudTooltip Text="Add a broker">
+                <MudIconButton Icon="@Icons.Material.Filled.Add" OnClick="NewBroker" Disabled="Busy" aria-label="Add broker" />
             </MudTooltip>
         </div>
-        <MudCollapse Expanded="_showOptions">
-            <div class="conn-row options">
-                <MudTextField T="string" @bind-Value="S.Subscriptions" Label="Subscribe to" HelperText="Comma-separated topic filters"
-                              Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="Busy" Class="f-subs" />
-                <MudTextField T="string" @bind-Value="S.ClientId" Label="Client ID" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="Busy" />
-                <MudTextField T="string" @bind-Value="S.Username" Label="Username" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="Busy" />
-                <MudTextField T="string" @bind-Value="S.Password" Label="Password" InputType="InputType.Password" Variant="Variant.Outlined"
-                              Margin="Margin.Dense" Disabled="Busy" />
-                <MudSelect T="int" @bind-Value="S.ProtocolVersion" Label="MQTT version" Variant="Variant.Outlined" Margin="Margin.Dense"
-                           Disabled="Busy" Class="f-small">
-                    <MudSelectItem Value="4">3.1.1</MudSelectItem>
-                    <MudSelectItem Value="5">5.0</MudSelectItem>
-                </MudSelect>
-                <MudSelect T="int" @bind-Value="S.SubscribeQos" Label="QoS" Variant="Variant.Outlined" Margin="Margin.Dense"
-                           Disabled="Busy" Class="f-small">
-                    <MudSelectItem Value="0">0</MudSelectItem>
-                    <MudSelectItem Value="1">1</MudSelectItem>
-                    <MudSelectItem Value="2">2</MudSelectItem>
-                </MudSelect>
-                <MudCheckBox T="bool" @bind-Value="S.AllowUntrustedCertificates" Label="Accept untrusted TLS certificates" Disabled="Busy" />
-            </div>
-        </MudCollapse>
     </MudPaper>
 
-    <div class="workspace">
-        <MudPaper Square="true" Elevation="0" Class="side">
-            <div class="sidebar-top">
-                <MudTextField T="string" @bind-Value="_filter" Immediate="true" DebounceInterval="150" Placeholder="Filter topics"
-                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true"
-                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
-                <MudTooltip Text="@(_paused ? "Resume refreshing" : "Pause refreshing (messages are still recorded)")">
-                    <MudIconButton Icon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
-                                   Color="@(_paused ? Color.Warning : Color.Default)" OnClick="TogglePause" aria-label="Pause" />
-                </MudTooltip>
-                <MudTooltip Text="Forget all received messages">
-                    <MudIconButton Icon="@Icons.Material.Filled.DeleteSweep" OnClick="Clear" aria-label="Clear" />
-                </MudTooltip>
-            </div>
-            <div class="tree" role="tree">
-                @if (Session.Topics.Count == 0)
-                {
-                    <div class="empty">
-                        <MudText Typo="Typo.subtitle2">No messages yet</MudText>
-                        <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                            Choose TCP or WebSocket, enter your broker's address and press Connect.
-                            Or press Start demo to see simulated plant traffic with Sparkplug B nodes.
-                        </MudText>
-                    </div>
-                }
-                else
-                {
-                    var rows = BuildRows();
-                    if (rows.Count == 0)
-                    {
-                        <MudText Typo="Typo.body2" Class="empty mud-text-secondary">No topics match this filter.</MudText>
-                    }
-                    <Virtualize Items="rows" ItemSize="28" OverscanCount="30" Context="r">
-                        <TreeRow Row="r.Node" Depth="r.Depth" Open="r.Open" Selected="@(r.Node.Path == _selected)"
-                                 OnSelect="RowClick" OnToggle="Toggle" />
-                    </Virtualize>
-                }
-            </div>
-        </MudPaper>
-
-        <div class="right">
-            <MudTabs @bind-ActivePanelIndex="_tabIndex" Elevation="0" Class="tabs" Border="false">
-                <MudTabPanel Text="Topic" Icon="@Icons.Material.Filled.Article">
-                    <div class="tab-body">
-                    <TopicDetails Session="Session" Topic="SelectedTopic" Selected="_selectedMsg" SelectedChanged="m => _selectedMsg = m"
-                                  Format="@_format" FormatChanged="f => _format = f" />
-                    </div>
-                </MudTabPanel>
-                <MudTabPanel Text="Sparkplug nodes" Icon="@Icons.Material.Filled.AccountTree">
-                    <div class="tab-body"><SparkplugNodes Session="Session" Collapsed="_collapsed" /></div>
-                </MudTabPanel>
-                <MudTabPanel Text="Publish" Icon="@Icons.Material.Filled.Send">
-                    <div class="tab-body"><PublishPanel Session="Session" SelectedTopic="@_selected" /></div>
-                </MudTabPanel>
-            </MudTabs>
-
-            @if (Session.Plotted.Count > 0)
-            {
-                <ChartPanel Session="Session" />
-            }
-        </div>
-    </div>
-
-    <footer class="statusbar">
-        <span>Topics <b>@Session.Topics.Count</b></span>
-        <span>Messages <b>@Session.TotalMessages</b></span>
-        <span>Rate <b>@Session.Rate</b>/s</span>
-        <span>Sparkplug edge nodes <b>@Session.SpNodes.Values.Count(n => n.Device == null)</b></span>
-        <span>Data points <b>@Session.Series.Count</b></span>
-        @if (Session.Dropped > 0)
-        {
-            <span class="mud-error-text">Dropped <b>@Session.Dropped</b> (the view could not keep up)</span>
-        }
-        @if (_paused)
-        {
-            <span class="mud-warning-text"><b>View paused</b>, messages are still recorded</span>
-        }
-    </footer>
+    <Workspace @ref="_workspace" Session="Session" />
 </div>
 
 @code {
-    private const int MaxRows = 20_000;
-
-    private readonly record struct Row(TreeNode Node, int Depth, bool Open);
-
-    private readonly CancellationTokenSource _cts = new();
-    private readonly HashSet<string> _expanded = new();
-    private readonly HashSet<string> _collapsed = new();
     private MudThemeProvider? _themeProvider;
+    private Workspace? _workspace;
     private bool _isDark;
-    private string _filter = "";
-    private string? _selected;
-    private MqttMessage? _selectedMsg;
-    private string _format = "auto";
-    private int _tabIndex;
-    private bool _paused;
-    private bool _showOptions;
+    private List<ConnectionSettings> _brokers = new();
+    private string? _brokerId;
+    // Passwords typed for brokers that don't save them; kept for this browser tab only.
+    private readonly Dictionary<string, (string? Password, string? CertificatePassword)> _secrets = new();
 
     private ConnectionSettings S => Session.Settings;
     private bool Busy => Session.State is ConnState.Connected or ConnState.Connecting or ConnState.Reconnecting;
@@ -199,12 +101,13 @@
         _ => Icons.Material.Outlined.Cloud,
     };
 
-    private TopicData? SelectedTopic => _selected != null && Session.Topics.TryGetValue(_selected, out var t) ? t : null;
-
     protected override void OnInitialized()
     {
-        Session.PlotsChanged += OnPlotsChanged;
-        _ = RefreshLoopAsync();
+        Session.StatusChanged += OnSessionChanged;
+        Store.Changed += OnStoreChanged;
+        _brokers = Store.All;
+        _brokerId = _brokers.FirstOrDefault(b => b.Id == S.Id)?.Id ?? _brokers.FirstOrDefault()?.Id;
+        if (Store.LastError != null) Snackbar.Add(Store.LastError, Severity.Error);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -216,24 +119,27 @@
         }
     }
 
-    private void OnPlotsChanged() => InvokeAsync(StateHasChanged);
+    // Status changes arrive on MQTT threads; only they re-render this part of the page.
+    private void OnSessionChanged() => InvokeAsync(StateHasChanged);
 
-    // Applies incoming messages on the renderer's sync context a few times per second.
-    private async Task RefreshLoopAsync()
+    // Another tab saved or deleted a broker.
+    private void OnStoreChanged() => InvokeAsync(() =>
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(400));
-        try
+        _brokers = Store.All;
+        StateHasChanged();
+    });
+
+    private void SelectBroker(string id)
+    {
+        var b = Store.Get(id);
+        if (b == null) return;
+        if (_secrets.TryGetValue(id, out var secret))
         {
-            while (await timer.WaitForNextTickAsync(_cts.Token))
-            {
-                await InvokeAsync(() =>
-                {
-                    if (Session.Drain() && !_paused) StateHasChanged();
-                });
-            }
+            b.Password ??= secret.Password;
+            b.Tls.ClientCertificatePassword ??= secret.CertificatePassword;
         }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException) { }
+        _brokerId = id;
+        Session.Settings = b;
     }
 
     private async Task ToggleConnect()
@@ -242,22 +148,55 @@
         else await Session.ConnectAsync();
     }
 
-    private void TlsChanged(bool value)
+    private Task EditBroker() => OpenBrokerDialog(S.Clone(), isNew: false);
+
+    private Task NewBroker()
     {
-        S.UseTls = value;
-        if (S.Transport == TransportKind.Tcp)
+        var b = new ConnectionSettings { Name = "New broker", Subscriptions = S.Subscriptions };
+        return OpenBrokerDialog(b, isNew: true);
+    }
+
+    private async Task OpenBrokerDialog(ConnectionSettings profile, bool isNew)
+    {
+        var parameters = new DialogParameters<BrokerDialog>
         {
-            if (value && S.Port == 1883) S.Port = 8883;
-            else if (!value && S.Port == 8883) S.Port = 1883;
-        }
-        else if (value && S.WebSocketUri.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            { x => x.Profile, profile },
+            { x => x.IsNew, isNew },
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true };
+        var dialog = await Dialogs.ShowAsync<BrokerDialog>(isNew ? "Add broker" : "Broker settings", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not BrokerDialogResult r) return;
+
+        try
         {
-            S.WebSocketUri = "wss://" + S.WebSocketUri[5..];
+            if (r.Deleted)
+            {
+                Store.Delete(r.Profile.Id);
+                _secrets.Remove(r.Profile.Id);
+                _brokers = Store.All;
+                if (_brokers.Count == 0) Store.Save(new ConnectionSettings());
+                _brokers = Store.All;
+                SelectBroker(_brokers[0].Id);
+                Snackbar.Add($"Deleted {r.Profile.Name}", Severity.Info);
+                return;
+            }
+
+            Store.Save(r.Profile);
+            if (!r.Profile.SavePasswords) _secrets[r.Profile.Id] = (r.Profile.Password, r.Profile.Tls.ClientCertificatePassword);
+            else _secrets.Remove(r.Profile.Id);
+            _brokers = Store.All;
+            _brokerId = r.Profile.Id;
+            Session.Settings = r.Profile.Clone();
+            Snackbar.Add($"Saved {r.Profile.Name}", Severity.Success);
         }
-        else if (!value && S.WebSocketUri.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            S.WebSocketUri = "ws://" + S.WebSocketUri[6..];
+            Snackbar.Add($"Could not save to {Store.FilePath}: {ex.Message}", Severity.Error);
+            Session.Settings = r.Profile.Clone();
         }
+
+        if (r.Connect) await Session.ConnectAsync();
     }
 
     private void ToggleDemo()
@@ -268,79 +207,12 @@
             return;
         }
         Session.StartDemo();
-        if (_selected == null)
-        {
-            _selected = DemoGenerator.FirstTopic;
-            var parts = _selected.Split('/');
-            for (var i = 1; i < parts.Length; i++) _expanded.Add(string.Join('/', parts, 0, i));
-            _expanded.Add("factory");
-            _expanded.Add("factory/line1");
-        }
+        _workspace?.ShowDemoTopic();
     }
 
-    private void TogglePause() => _paused = !_paused;
-
-    private void Clear()
+    public void Dispose()
     {
-        Session.Clear();
-        _selected = null;
-        _selectedMsg = null;
-    }
-
-    private void Toggle(TreeNode n)
-    {
-        if (n.Children.Count == 0) return;
-        if (!_expanded.Remove(n.Path)) _expanded.Add(n.Path);
-    }
-
-    private void RowClick(TreeNode n)
-    {
-        if (n.Topic != null)
-        {
-            if (_selected == n.Path) Toggle(n);
-            _selected = n.Path;
-            _selectedMsg = null;
-            _tabIndex = 0;
-        }
-        else Toggle(n);
-    }
-
-    private List<Row> BuildRows()
-    {
-        var rows = new List<Row>();
-        HashSet<string>? visible = null;
-        var f = (_filter ?? "").Trim();
-        if (f.Length > 0)
-        {
-            visible = new HashSet<string>();
-            foreach (var topic in Session.Topics.Keys)
-            {
-                if (!topic.Contains(f, StringComparison.OrdinalIgnoreCase)) continue;
-                var parts = topic.Split('/');
-                for (var i = 1; i <= parts.Length; i++) visible.Add(string.Join('/', parts, 0, i));
-            }
-        }
-
-        void Walk(TreeNode node, int depth)
-        {
-            foreach (var c in node.SortedChildren)
-            {
-                if (rows.Count >= MaxRows) return;
-                if (visible != null && !visible.Contains(c.Path)) continue;
-                var open = visible != null || _expanded.Contains(c.Path);
-                rows.Add(new Row(c, depth, open));
-                if (open && c.Children.Count > 0) Walk(c, depth + 1);
-            }
-        }
-        Walk(Session.Root, 0);
-        return rows;
-    }
-
-    public ValueTask DisposeAsync()
-    {
-        Session.PlotsChanged -= OnPlotsChanged;
-        _cts.Cancel();
-        _cts.Dispose();
-        return ValueTask.CompletedTask;
+        Session.StatusChanged -= OnSessionChanged;
+        Store.Changed -= OnStoreChanged;
     }
 }

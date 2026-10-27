@@ -18,23 +18,46 @@ git clone https://github.com/ehilgenvs/spark-explorer.git
 podman-compose -f docker-compose.yml up --build
 ```
 
+With Docker or podman, saved brokers and uploaded certificates are kept on the `spark-data` volume.
+
 
 Then open http://localhost:5080.
 
-## Connecting
+## Brokers
 
-Pick the transport in the top bar:
+Pick a broker in the top bar and press **Connect**. Use the gear button to edit the selected broker and **+** to add one.
+Each broker has a name and its own connection, login, TLS and subscription settings:
 
 | Transport | What to enter | Typical ports |
 |-----------|---------------|---------------|
 | TCP       | Host and port | 1883, or 8883 with TLS |
 | WebSocket | Full URL      | `ws://host:9001`, `ws://host:8083/mqtt` (EMQX), `ws://host:8000/mqtt` (HiveMQ), `wss://…` for TLS |
 
-**Options** holds the client ID, username/password, MQTT version (3.1.1 or 5.0),
-subscription filters (comma-separated, default `#, $SYS/#`), subscription QoS,
-and an option to accept untrusted (self-signed) TLS certificates.
+Brokers are saved in **`appsettings.brokers.json`** next to `appsettings.json`, and are shared by everyone using the app.
+Set `BrokerStore:Path` (environment variable `BrokerStore__Path`) to keep the file somewhere else, such as a container volume.
+On first start the file is created from the `Mqtt` section of `appsettings.json`. Alternatively, list several brokers in a
+`Brokers` array there, using the same fields as the saved file.
 
-Default values come from the `Mqtt` section of `appsettings.json`.
+Passwords are only written to the file when **Save passwords in the settings file** is ticked; they are stored as plain text.
+Otherwise you enter them again in each browser tab. `appsettings.brokers.json` and `certs/` are in `.gitignore` so they
+don't end up in the repository.
+
+### TLS
+
+Turn on TLS in the broker settings. The broker's certificate is accepted when the operating system trusts it, or when it was
+signed by the **CA certificate** you add (PEM, CRT or DER). This is what you need for brokers with a private or self-signed CA.
+
+- **Client certificate:** for brokers that require one (mutual TLS). Use a PFX/P12 file with its password, or PEM files:
+  a certificate with the key inside, or a certificate plus a separate key file.
+- **Server name:** the name in the broker's certificate, when you connect by IP address or another name (TCP only;
+  for WebSocket, use that name in the URL).
+- **TLS version:** Auto, TLS 1.2 or TLS 1.3.
+- **Check certificate revocation:** off by default, because private CAs often have no reachable revocation list.
+- **Accept any server certificate:** skips all checks. Insecure; for testing only.
+
+Certificate files can be uploaded from the dialog. They are stored in a `certs` folder next to the settings file, and
+paths are relative to that folder. When a TLS connection fails, the status shows the reason, for example an untrusted
+CA or a certificate issued to a different host name.
 
 The connection reconnects automatically every 3 seconds if it drops, and resubscribes after reconnecting.
 
@@ -88,12 +111,16 @@ Sparkplug/ProtoWire.cs          protobuf wire reader/writer
 Sparkplug/SparkplugCodec.cs     Sparkplug B payload model, decode + encode
 Sparkplug/SparkplugDecoder.cs   datatypes, alias resolution, display values
 Services/MqttSession.cs         MQTTnet client (TCP/WS/TLS), message store, Sparkplug state
+Services/BrokerStore.cs         saved brokers (appsettings.brokers.json) and uploaded certificates
+Services/CertificateFiles.cs    loading CA and client certificates (PEM, DER, PFX)
 Services/Models.cs              topic tree, payload detection, formatting
 Services/DemoGenerator.cs       simulated traffic
 Services/DataSeries.cs          per-data-point history and JSON value extraction
 Components/AppTheme.cs          MudBlazor theme and chart colours
 Components/Pages/Home.razor     main page
 Components/Parts/ChartPanel.razor  live time-series chart
+Components/Parts/BrokerDialog.razor  broker settings dialog
+Components/Parts/Workspace.razor   live data area (refreshes on its own)
 Components/Parts/*.razor        topic details, Sparkplug views, publish panel
 ```
 
