@@ -71,7 +71,6 @@ The connection reconnects automatically every 3 seconds if it drops, and resubsc
   - Handles every datatype, including arrays, DataSet, Template, DateTime and metric properties.
 - **Sparkplug nodes tab:** groups, edge nodes and devices with online/offline state, sequence numbers and current metric values. Also shows STATE messages from host applications. A **Rebirth** button sends an NCMD `Node Control/Rebirth`.
 - **Publish tab:** text or hex payloads with QoS and retain. **Clear retained** removes a retained message from the selected topic.
-- **Start demo:** simulated plant traffic so you can try the app without a broker.
 - **Light and dark theme:** follows your system setting; switch with the icon in the app bar.
 
 ## Charts
@@ -114,7 +113,6 @@ Services/MqttSession.cs         MQTTnet client (TCP/WS/TLS), message store, Spar
 Services/BrokerStore.cs         saved brokers (appsettings.brokers.json) and uploaded certificates
 Services/CertificateFiles.cs    loading CA and client certificates (PEM, DER, PFX)
 Services/Models.cs              topic tree, payload detection, formatting
-Services/DemoGenerator.cs       simulated traffic
 Services/DataSeries.cs          per-data-point history and JSON value extraction
 Components/AppTheme.cs          MudBlazor theme and chart colours
 Components/Pages/Home.razor     main page

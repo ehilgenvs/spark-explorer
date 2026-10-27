@@ -23,7 +23,6 @@
                     <MudText Typo="Typo.subtitle2">No messages yet</MudText>
                     <MudText Typo="Typo.body2" Class="mud-text-secondary">
                         Choose TCP or WebSocket, enter your broker's address and press Connect.
-                        Or press Start demo to see simulated plant traffic with Sparkplug B nodes.
                     </MudText>
                 </div>
             }
@@ -124,18 +123,6 @@
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
-    }
-
-    /// <summary>Selects and reveals the first demo topic when nothing is selected yet.</summary>
-    public void ShowDemoTopic()
-    {
-        if (_selected != null) return;
-        _selected = DemoGenerator.FirstTopic;
-        var parts = _selected.Split('/');
-        for (var i = 1; i < parts.Length; i++) _expanded.Add(string.Join('/', parts, 0, i));
-        _expanded.Add("factory");
-        _expanded.Add("factory/line1");
-        StateHasChanged();
     }
 
     private void TogglePause() => _paused = !_paused;

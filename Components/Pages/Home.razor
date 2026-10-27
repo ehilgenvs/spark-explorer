@@ -23,10 +23,6 @@
                 @Session.StatusText
             </MudChip>
         </MudTooltip>
-        <MudButton Color="Color.Inherit" OnClick="ToggleDemo"
-                   StartIcon="@(Session.DemoRunning ? Icons.Material.Filled.Stop : Icons.Material.Filled.PlayArrow)">
-            @(Session.DemoRunning ? "Stop demo" : "Start demo")
-        </MudButton>
         <MudTooltip Text="@(_isDark ? "Light theme" : "Dark theme")">
             <MudIconButton Icon="@(_isDark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
                            Color="Color.Inherit" OnClick="() => _isDark = !_isDark" aria-label="Toggle dark theme" />
@@ -70,12 +66,11 @@
         </div>
     </MudPaper>
 
-    <Workspace @ref="_workspace" Session="Session" />
+    <Workspace Session="Session" />
 </div>
 
 @code {
     private MudThemeProvider? _themeProvider;
-    private Workspace? _workspace;
     private bool _isDark;
     private List<ConnectionSettings> _brokers = new();
     private string? _brokerId;
@@ -197,17 +192,6 @@
         }
 
         if (r.Connect) await Session.ConnectAsync();
-    }
-
-    private void ToggleDemo()
-    {
-        if (Session.DemoRunning)
-        {
-            Session.StopDemo();
-            return;
-        }
-        Session.StartDemo();
-        _workspace?.ShowDemoTopic();
     }
 
     public void Dispose()

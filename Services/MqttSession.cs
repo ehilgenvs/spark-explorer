@@ -26,7 +26,6 @@ public sealed class MqttSession : IAsyncDisposable
     private volatile string? _lastTlsError;
     private readonly ConcurrentQueue<Incoming> _queue = new();
     private readonly SparkplugDecoder _decoder = new();
-    private readonly object _demoLock = new();
 
     private IMqttClient? _client;
     private MqttClientOptions? _options;
@@ -34,8 +33,6 @@ public sealed class MqttSession : IAsyncDisposable
     private volatile bool _userDisconnect;
     private volatile bool _statusChanged;
     private int _reconnecting;
-    private System.Threading.Timer? _demoTimer;
-    private DemoGenerator? _demo;
     private long _dropped;
     private int _rateCount;
     private DateTime _rateStart = DateTime.UtcNow;
@@ -55,7 +52,6 @@ public sealed class MqttSession : IAsyncDisposable
     public ConnState State { get; private set; } = ConnState.Disconnected;
     public string StatusText { get; private set; } = "Disconnected";
     public bool IsConnected => _client?.IsConnected == true;
-    public bool DemoRunning => _demoTimer != null;
 
     public Dictionary<string, TopicData> Topics { get; } = new();
     public TreeNode Root { get; } = new("", "");
@@ -363,36 +359,6 @@ public sealed class MqttSession : IAsyncDisposable
         return ex;
     }
 
-    // ------------------------------------------------------------------ demo traffic
-
-    public void StartDemo()
-    {
-        lock (_demoLock)
-        {
-            if (_demoTimer != null) return;
-            _demo = new DemoGenerator();
-            foreach (var m in _demo.Births()) _queue.Enqueue(m);
-            _demoTimer = new System.Threading.Timer(_ =>
-            {
-                lock (_demoLock)
-                {
-                    if (_demo == null) return;
-                    foreach (var m in _demo.Tick()) _queue.Enqueue(m);
-                }
-            }, null, 0, 1000);
-        }
-    }
-
-    public void StopDemo()
-    {
-        lock (_demoLock)
-        {
-            _demoTimer?.Dispose();
-            _demoTimer = null;
-            _demo = null;
-        }
-    }
-
     // ------------------------------------------------------------------ message store
 
     /// <summary>Applies queued messages. Call from the UI thread. Returns true when the UI should re-render.</summary>
@@ -612,7 +578,6 @@ public sealed class MqttSession : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        StopDemo();
         await DisconnectAsync();
     }
 }
