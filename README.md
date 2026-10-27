@@ -1,6 +1,6 @@
 # Spark Explorer (Blazor)
 
-A web-based MQTT explorer that shows plain MQTT messages, decodes **Sparkplug B** and charts selected data points.
+A web-based MQTT spark explorer that shows plain MQTT messages, decodes **Sparkplug B** and charts selected data points.
 The interface is built with [MudBlazor](https://mudblazor.com) 9.
 It is a Blazor Server app (.NET 8), so the broker connection is made by the server.
 That is what makes plain **TCP** connections possible alongside **WebSocket**.
