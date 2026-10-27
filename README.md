@@ -13,6 +13,12 @@ Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download).
 dotnet run
 ```
 
+```bash
+git clone https://github.com/ehilgenvs/spark-explorer.git
+podman-compose -f docker-compose.yml up --build
+```
+
+
 Then open http://localhost:5080.
 
 ## Connecting
